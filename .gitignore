@@ -1,0 +1,8 @@
+.ai_docs/
+lab.env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+results/
+reports/
