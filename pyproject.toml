@@ -10,3 +10,6 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

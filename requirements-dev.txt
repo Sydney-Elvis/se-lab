@@ -1,0 +1,4 @@
+# Dev-only dependencies for working on se-lab itself (running tests/).
+# Not needed by a product lab consuming se-lab -- see requirements.txt for that.
+-r requirements.txt
+pytest~=8.3
