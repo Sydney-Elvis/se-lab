@@ -37,7 +37,7 @@ def configure(*, repo_root: Path, product_name: str, env_prefix: str) -> None:
     into the importing module's own namespace and won't see this update.
     """
     global REPO_ROOT, SCRIPTS_DIR, CONFIG_DIR, PRODUCT_NAME, ENV_PREFIX
-    REPO_ROOT = repo_root
+    REPO_ROOT = Path(repo_root)
     SCRIPTS_DIR, CONFIG_DIR = _paths_for(REPO_ROOT)
     PRODUCT_NAME = product_name
     ENV_PREFIX = env_prefix
