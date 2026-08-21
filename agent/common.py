@@ -538,11 +538,15 @@ def detect_compose_base_command() -> list[str]:
     raise SystemExit("Neither 'docker compose' nor 'docker-compose' is available on this server.")
 
 
-def compose_command(*args: str) -> list[str]:
+def compose_command(*args: str, extra_compose_files: Sequence[Path] = ()) -> list[str]:
     ensure_layout()
     ensure_runtime_ready_for_compose()
     base = detect_compose_base_command()
-    return [*base, "-p", project_name(), "-f", str(runtime_compose_file()), "--env-file", str(runtime_env_file()), *args]
+    cmd = [*base, "-p", project_name(), "-f", str(runtime_compose_file())]
+    for extra in extra_compose_files:
+        cmd += ["-f", str(extra)]
+    cmd += ["--env-file", str(runtime_env_file()), *args]
+    return cmd
 
 
 def ensure_runtime_ready_for_compose() -> None:
@@ -578,16 +582,16 @@ def backup_runtime_file(path: Path) -> Path:
     return backup_path
 
 
-def compose_up() -> None:
-    run(compose_command("down", "--remove-orphans"), check=False)
-    run(compose_command("up", "-d", "--remove-orphans"))
+def compose_up(*, extra_compose_files: Sequence[Path] = ()) -> None:
+    run(compose_command("down", "--remove-orphans", extra_compose_files=extra_compose_files), check=False)
+    run(compose_command("up", "-d", "--remove-orphans", extra_compose_files=extra_compose_files))
 
 
-def compose_up_only(service: str) -> None:
+def compose_up_only(service: str, *, extra_compose_files: Sequence[Path] = ()) -> None:
     """Start just one compose service, e.g. after a fresh DB/state wipe left
     dependent clients unable to pass their health checks yet."""
-    run(compose_command("down", "--remove-orphans"), check=False)
-    run(compose_command("up", "-d", service))
+    run(compose_command("down", "--remove-orphans", extra_compose_files=extra_compose_files), check=False)
+    run(compose_command("up", "-d", service, extra_compose_files=extra_compose_files))
 
 
 def compose_down() -> None:
