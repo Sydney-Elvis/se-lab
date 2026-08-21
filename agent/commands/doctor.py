@@ -12,7 +12,6 @@ from .. import registry
 from ..config import Config, get_setting
 from ..context import current_hostname
 from ..reporting.metrics import append_ai_call
-from .. import common as lab_common
 from .support import run_ad_hoc_model
 
 
@@ -95,7 +94,6 @@ def handle_doctor_ai(args: argparse.Namespace, config: Config) -> int:
                 "run_id": "doctor-ai",
                 "timestamp_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "host": current_hostname(),
-                "role": lab_common.current_role(),
                 "task_type": f"doctor:{args.task}",
                 "provider": result.provider_type,
                 "endpoint": result.endpoint,

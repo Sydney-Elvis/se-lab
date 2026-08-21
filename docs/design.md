@@ -52,8 +52,11 @@ AI analysis runs only on failure or explicit request (`./lab analyze`, `./lab do
 **Plugin interface — command registration:**
 
 ```python
-# In product-lab's __init__.py
-from se_lab.agent import registry
+# se-lab is a submodule at <product-lab>/se-lab/; scripts/agent.py adds that
+# directory to sys.path before importing anything from agent/, so the
+# importable package is `agent`, not `se_lab` -- there is no se_lab package.
+# In product-lab's own commands package:
+from agent import registry
 
 @registry.command("run", help="Deploy and run the full test suite")
 def cmd_run(args, config):
@@ -64,11 +67,18 @@ def cmd_build(args, config):
     ...
 ```
 
+Note: `down` is the one lifecycle verb se-lab already registers as a built-in itself
+(`agent/commands/down.py`, calls `agent.common.compose_down()`) since "stop the one compose
+stack this product lab deploys" generalizes across products. `registry.command()` raises on a
+duplicate name, so a product lab cannot also register a top-level `down` — pick a different name
+for anything narrower than that (e.g. tearing down one named profile while leaving another
+running).
+
 **Plugin interface — analysis hooks:**
 
 ```python
 # Product lab provides product-specific log parsing and classification rubrics
-from se_lab.agent.analysis import AnalysisPlugin
+from agent.analysis.plugin import AnalysisPlugin
 
 class MyProductAnalysis(AnalysisPlugin):
     def extract_log_context(self, logs: str) -> str: ...
@@ -76,29 +86,29 @@ class MyProductAnalysis(AnalysisPlugin):
     def failure_prompt(self, context: str) -> str: ...
 ```
 
-### Docker Helpers (`scripts/common/`)
+### Docker Helpers (`agent/common.py`)
 
-Generic Docker Compose lifecycle utilities:
+Generic Docker Compose lifecycle utilities — call these from your own registered commands, don't
+reimplement `docker compose` calls by hand:
+- `compose_command()`, `compose_up()`, `compose_up_only()`, `compose_down()`, `compose_ps()`,
+  `compose_logs()` — Compose up/down/status/log capture, with `extra_compose_files=` for
+  scenario-specific overrides layered on your base compose file
 - Environment loading from `lab.env`
-- Compose up/down/recreate with health-wait
-- Image pull and build (branch or tag)
-- Container log capture
 - Deployment metadata (image digest, timestamp, branch)
-- Result directory layout (`results/<run-id>/`)
 
 No product-specific ports, service names, or compose fragments.
 
 ### Client App Orchestration (`./lab clients`)
 
-First-class support for bringing up external client services alongside the product under test.
+**Implemented today:** `clients status`, `clients update`, `clients rollback`, `clients pin`
+(`agent/commands/clients.py`).
 
-**Lifecycle commands:**
+**Designed, not yet implemented** — first-class support for bringing up external client services
+alongside the product under test:
 ```
 ./lab clients up [--profile <name>]   # start selected clients
 ./lab clients down                     # stop and remove
-./lab clients status                   # health check all clients
 ./lab clients reset [--profile <name>] # wipe state, return to clean baseline
-./lab clients update [--client <name>] # pull latest image for a client
 ```
 
 **Profile-based selection:** A product lab defines named profiles (e.g. `cwa-sftp`, `abs`, `jellyfin`) mapping to sets of compose services. `./lab clients up --profile cwa-sftp` brings up only the relevant services.
@@ -106,7 +116,7 @@ First-class support for bringing up external client services alongside the produ
 **Client verification interface:**
 
 ```python
-from se_lab.clients import ClientPlugin
+from agent.clients.plugin import ClientPlugin
 
 class CWAClient(ClientPlugin):
     name = "cwa"

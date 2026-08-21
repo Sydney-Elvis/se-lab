@@ -41,8 +41,6 @@ from typing import Callable, Sequence
 
 from . import registry, runtime
 
-VALID_ROLES = ("srv1", "srv2")
-
 LAB_ENV_FILE = runtime.REPO_ROOT / "lab.env"
 DOCKER_CONFIG_DIR = runtime.REPO_ROOT / "docker-config"
 REPOS_DIR = runtime.REPO_ROOT / "repos"
@@ -84,11 +82,6 @@ def _placeholder_image() -> str:
 def _image_env_key() -> str:
     _, env_prefix = runtime.require_product_config()
     return f"{env_prefix}_IMAGE"
-
-
-def _role_env_key() -> str:
-    _, env_prefix = runtime.require_product_config()
-    return f"{env_prefix}_LAB_ROLE"
 
 
 def _runtime_dir_env_key() -> str:
@@ -251,44 +244,19 @@ def unset_runtime_env_var(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# role / runtime paths
+# runtime paths
 # ---------------------------------------------------------------------------
 
 
-def detect_role_from_hostname() -> str | None:
-    hostname = current_hostname()
-    if "int-srv1" in hostname or hostname.endswith("srv1"):
-        return "srv1"
-    if "int-srv2" in hostname or hostname.endswith("srv2"):
-        return "srv2"
-    return None
-
-
-def current_role() -> str:
-    role = resolve_setting(_role_env_key(), default=detect_role_from_hostname() or "srv1")
-    if role not in VALID_ROLES:
-        raise SystemExit(f"Unsupported {_role_env_key()}={role!r}. Expected one of: {', '.join(VALID_ROLES)}.")
-    return role
-
-
-def require_role(expected_role: str) -> None:
-    role = current_role()
-    if role != expected_role:
-        raise SystemExit(
-            f"This script is for role '{expected_role}', but the current lab role is '{role}'. "
-            f"Update {LAB_ENV_FILE} or rerun setup_vm.sh with --role {expected_role} on the correct host."
-        )
-
-
-def default_runtime_dir_for_role(role: str) -> Path:
-    return runtime.REPO_ROOT.parent / f"{runtime.require_product_config()[0]}-{role}"
+def default_runtime_dir() -> Path:
+    return runtime.REPO_ROOT.parent / runtime.require_product_config()[0]
 
 
 def runtime_dir() -> Path:
     configured = resolve_setting(_runtime_dir_env_key())
     if configured:
         return Path(configured)
-    return default_runtime_dir_for_role(current_role())
+    return default_runtime_dir()
 
 
 def runtime_compose_file() -> Path:
@@ -429,31 +397,33 @@ def ensure_layout() -> None:
 
 
 def compose_template_file() -> Path | None:
-    candidate = DOCKER_CONFIG_DIR / current_role() / "docker-compose.yaml"
+    candidate = DOCKER_CONFIG_DIR / "docker-compose.yaml"
     return candidate if candidate.exists() else None
 
 
-def role_has_compose_stack() -> bool:
+def has_compose_stack() -> bool:
     return compose_template_file() is not None
 
 
 def project_name() -> str:
     product_name, _ = runtime.require_product_config()
-    return f"{product_name}-lab-{current_role()}"
+    return f"{product_name}-lab"
 
 
-def role_summary() -> str:
-    return f"role={current_role()} runtime_dir={runtime_dir()}"
+def runtime_summary() -> str:
+    return f"runtime_dir={runtime_dir()}"
 
 
-def suggested_commands_for_role(role: str | None = None) -> list[str]:
-    active_role = role or current_role()
-    commands = ["lab status", "lab build <branch>", "lab pull <tag>"]
-    if active_role == "srv1":
-        commands.extend(["lab run <branch>", "lab run --tag <tag>", "lab recreate"])
-    else:
-        commands.extend(["lab checklist <target>", "lab recreate"])
-    return commands
+def suggested_commands() -> list[str]:
+    return [
+        "lab status",
+        "lab build <branch>",
+        "lab pull <tag>",
+        "lab run <branch>",
+        "lab run --tag <tag>",
+        "lab recreate",
+        "lab checklist <target>",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +522,7 @@ def compose_command(*args: str, extra_compose_files: Sequence[Path] = ()) -> lis
 def ensure_runtime_ready_for_compose() -> None:
     template = compose_template_file()
     if template is None:
-        raise SystemExit(f"The current role '{current_role()}' does not have a runnable compose stack yet.")
+        raise SystemExit("No runnable compose stack yet -- missing docker-config/docker-compose.yaml.")
     sync_runtime_compose()
 
 
@@ -560,7 +530,7 @@ def sync_runtime_compose() -> None:
     ensure_layout()
     template_path = compose_template_file()
     if template_path is None:
-        print(f"No compose template is defined for role '{current_role()}'. Runtime directory prepared at {runtime_dir()} only.", flush=True)
+        print(f"No compose template defined yet. Runtime directory prepared at {runtime_dir()} only.", flush=True)
         return
     if not template_path.exists():
         raise SystemExit(f"Missing compose template: {template_path}")

@@ -5,9 +5,14 @@ command's implementation lives in agent/commands/ (se-lab's own built-ins) or
 in a product lab's own package (registered the same way — see agent/registry.py).
 
 `status`, `run`, `recreate`, `analyze`, `build`, `pull`, `logs`, and
-`checklist` are not registered yet: they need scripts/common/common.py (not
-yet ported) and, for run/recreate, an additional deploy-target/test-runner
-plugin seam not yet designed. See .ai_docs/roadmap.md.
+`checklist` have no se-lab built-in and never will -- each product lab
+registers its own, built on the generic helpers in agent/common.py (see
+docs/design.md's plugin-interface example). `down` is the one lifecycle verb
+se-lab does provide as a built-in (agent/commands/down.py) since "stop the
+current compose stack" generalizes; a product lab should not also register a
+top-level `down` (registry.command() raises on the duplicate name). For
+run/recreate specifically, there's still an unbuilt deploy-target/test-runner
+plugin seam -- see .ai_docs/roadmap.md.
 """
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ def _strip_server_args(argv: list[str]) -> list[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="se-lab: role-aware integration test harness runner.")
+    parser = argparse.ArgumentParser(description="se-lab: integration test harness runner.")
     parser.add_argument("--server", default=None, help="Run the command on a different host over SSH")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

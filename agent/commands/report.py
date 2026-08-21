@@ -56,7 +56,10 @@ def _normalize_latest_run(
         "schema_version": latest.get("schema_version") or 1,
         "run_id": latest.get("run_id") or metadata.get("run_id"),
         "status": status,
-        "role": latest.get("role") or metadata.get("lab_role"),
+        # se-lab no longer has a role concept and never writes this; kept read-only so
+        # Phase 3's 1:1 comparison can still parse the frozen old harness's baseline
+        # artifacts, which do write metadata["lab_role"]. Drop in Phase 4.
+        "lab_role": metadata.get("lab_role"),
         "host": latest.get("host") or metadata.get("hostname"),
         "source_type": source_type,
         "source_ref": source_ref,

@@ -17,7 +17,8 @@ lab.env  (per-server, gitignored — the only private layer)
 **se-lab** provides:
 - `./lab` CLI entry point and command framework
 - Docker Compose lifecycle (deploy, pull, health-wait, teardown)
-- Client app orchestration (`./lab clients up/down/status/reset`)
+- Client app orchestration (`./lab clients status/update/rollback/pin` today; `up`/`down`/`reset`
+  are designed — see `docs/design.md` — but not yet implemented)
 - AI-assisted log analysis and failure classification via LiteLLM
 - Run result tracking and report generation
 - Plugin interfaces for product repos to register commands, analysis hooks, and client verification steps
@@ -74,12 +75,26 @@ cp se-lab/lab.env.example lab.env
 # edit lab.env with your server-specific values, and add your product's own
 # <ENV_PREFIX>_* settings (repo URL, GHCR image, etc.)
 
-./lab status
+./lab --help
 ```
 
-Setup automation (`setup_vm.sh`) that performs the venv/dependency steps above plus an
-environment preflight check is in progress — see `.ai_docs/roadmap.md`'s bootstrap item. Until
-it lands, those steps are manual.
+se-lab itself registers no `status` command — `status`/`run`/`build`/etc. are each product lab's
+own responsibility to register (see `docs/design.md`'s plugin interface example), built on top
+of the Docker Compose helpers in `agent/common.py`. `./lab --help` lists whatever your product
+lab has registered so far; it's the right sanity check right after scaffolding, before you've
+written any commands of your own.
+
+On a fresh VM, `scripts/setup_vm.sh` (in se-lab) can do the venv/dependency steps above for
+you, plus install git/python3.12/docker/compose, create required directories, and run a
+preflight check:
+
+```bash
+bash se-lab/scripts/setup_vm.sh --product-name yourproduct --env-prefix YOURPRODUCT
+```
+
+`--product-name`/`--env-prefix` must match what your `scripts/agent.py` passes to
+`agent.runtime.configure()`. Run `bash se-lab/scripts/setup_vm.sh --help` for the full flag
+list (`--base-dir`, `--extra-packages`, etc.).
 
 ## Status
 

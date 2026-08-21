@@ -23,7 +23,6 @@ def handle_discover(args: argparse.Namespace, config: Config) -> int:
     available.extend(cmd.name for subs in groups.values() for cmd in subs)
     payload = {
         "host": current_hostname(),
-        "role": lab_common.current_role(),
         "repo_root": str(REPO_ROOT),
         "runtime_dir": str(lab_common.runtime_dir()),
         "runtime_compose_file": str(lab_common.runtime_compose_file()),

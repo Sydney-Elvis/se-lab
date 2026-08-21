@@ -26,14 +26,14 @@ def test_product_config_is_set_by_conftest():
     assert runtime.require_product_config() == ("selftest", "SELFTEST")
 
 
-def test_current_role_defaults_and_validates(monkeypatch):
-    monkeypatch.delenv("SELFTEST_LAB_ROLE", raising=False)
-    assert lab_common.current_role() in ("srv1", "srv2")
-    monkeypatch.setenv("SELFTEST_LAB_ROLE", "srv2")
-    assert lab_common.current_role() == "srv2"
-    monkeypatch.setenv("SELFTEST_LAB_ROLE", "not-a-role")
-    with pytest.raises(SystemExit, match="Unsupported"):
-        lab_common.current_role()
+def test_runtime_dir_defaults_to_repo_root_parent_product_name(monkeypatch):
+    monkeypatch.delenv("SELFTEST_RUNTIME_DIR", raising=False)
+    assert lab_common.runtime_dir() == runtime.REPO_ROOT.parent / "selftest"
+
+
+def test_runtime_dir_honors_explicit_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("SELFTEST_RUNTIME_DIR", str(tmp_path))
+    assert lab_common.runtime_dir() == tmp_path
 
 
 def test_repo_dir_and_image_naming_use_product_name():

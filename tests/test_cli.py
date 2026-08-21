@@ -47,7 +47,7 @@ def test_main_runs_discover_end_to_end(capsys):
     code = cli.main(["discover"])
     assert code == 0
     out = capsys.readouterr().out
-    assert '"role"' in out
+    assert '"runtime_dir"' in out
     assert '"available_commands"' in out
 
 

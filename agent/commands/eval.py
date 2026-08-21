@@ -11,7 +11,6 @@ from .. import registry
 from ..config import Config
 from ..context import current_hostname
 from ..reporting.metrics import append_ai_call
-from .. import common as lab_common
 from .support import run_ad_hoc_model
 
 
@@ -31,7 +30,6 @@ def _evaluate_model(
                 "run_id": "eval-ai",
                 "timestamp_utc": started_at,
                 "host": current_hostname(),
-                "role": lab_common.current_role(),
                 "task_type": f"eval:{task}",
                 "provider": result.provider_type,
                 "endpoint": result.endpoint,

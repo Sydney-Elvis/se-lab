@@ -6,13 +6,18 @@
 # version undersold as a "prefix strip" the same way common.py/cli.py did
 # before their own audits -- it hardcoded the M3Undle product name into a
 # directory-naming convention that no longer matches what agent/common.py
-# actually computes (default_runtime_dir_for_role() is a uniform
-# {product_name}-{role}, not the original's asymmetric "m3undle" for srv1 /
-# "client-apps" for srv2), installed a product-specific apt package
-# (hdhomerun-config) unconditionally, pre-created NextPVR-specific
-# directories, and only ever installed a bare `python3` with no venv --
-# exactly the two gaps the earlier bootstrap audit flagged as working only
-# by accident on Ubuntu 24.04. All fixed here; see .ai_docs/roadmap.md.
+# actually computes (default_runtime_dir() is a uniform {product_name}, not
+# the original's asymmetric "m3undle" for srv1 / "client-apps" for srv2),
+# installed a product-specific apt package (hdhomerun-config) unconditionally,
+# pre-created NextPVR-specific directories, and only ever installed a bare
+# `python3` with no venv -- exactly the two gaps the earlier bootstrap audit
+# flagged as working only by accident on Ubuntu 24.04. All fixed here; see
+# .ai_docs/roadmap.md.
+#
+# The original also had a --role srv1|srv2 concept (one physical server ran
+# the automated suites, a second ran client-app checklists). Removed here --
+# see .ai_docs/roadmap.md's role-removal audit -- once a product lab deploys
+# to one server, "role" has no meaning left to select.
 #
 # Unlike the `lab` shim / scripts/agent.py, this script does NOT need to
 # self-locate: it operates entirely on --base-dir/--lab-dir and explicit
@@ -25,7 +30,6 @@ BASE_DIR="/opt"
 LAB_DIR=""
 PRODUCT_NAME=""
 ENV_PREFIX=""
-ROLE=""
 OWNER="${SUDO_USER:-${USER}}"
 GROUP="${OWNER}"
 INSTALL_DEPS=1
@@ -35,7 +39,7 @@ PYTHON_VERSION="3.12"
 usage() {
   cat <<'EOF'
 Usage: bash scripts/setup_vm.sh --product-name NAME --env-prefix PREFIX
-         [--base-dir /opt] [--lab-dir PATH] [--role srv1|srv2]
+         [--base-dir /opt] [--lab-dir PATH]
          [--owner USER] [--group GROUP] [--extra-packages "pkg1 pkg2"]
          [--skip-install-deps]
 
@@ -43,10 +47,9 @@ Prepare a fresh VM for a se-lab-based product lab:
 - install git, python3.12 (+venv), docker, Docker Compose, Docker Buildx on
   Ubuntu/Debian, plus any --extra-packages your product needs
 - create the lab's own .venv and install its Python dependencies into it
-- choose or infer the server role
 - create required directories, set ownership
-- create lab.env if missing, stamp the selected role into it
-- prepare the runtime compose layout for the role
+- create lab.env if missing
+- prepare the runtime compose layout
 - enable Docker and add the selected owner to the docker group
 - run a preflight check and report PASS/FAIL for each requirement
 
@@ -88,27 +91,6 @@ is_ubuntu_like() {
   fi
   . /etc/os-release
   [[ "${ID:-}" == "ubuntu" || "${ID:-}" == "debian" || "${ID_LIKE:-}" == *"debian"* ]]
-}
-
-prompt_for_role() {
-  local reply
-  if [[ ! -t 0 ]]; then
-    echo "Unable to infer role from hostname. Pass --role srv1 or --role srv2." >&2
-    exit 1
-  fi
-  while true; do
-    read -r -p "Select server role [srv1/srv2]: " reply
-    reply="$(printf '%s' "${reply}" | tr '[:upper:]' '[:lower:]')"
-    case "${reply}" in
-      srv1|srv2)
-        ROLE="${reply}"
-        return 0
-        ;;
-      *)
-        echo "Please enter 'srv1' or 'srv2'." >&2
-        ;;
-    esac
-  done
 }
 
 install_first_available_package() {
@@ -167,20 +149,6 @@ install_dependencies() {
   fi
 }
 
-detect_role() {
-  local hostname
-  hostname="$(hostname | tr '[:upper:]' '[:lower:]')"
-  if [[ "${hostname}" == *"int-srv1"* || "${hostname}" == *"srv1" ]]; then
-    printf 'srv1\n'
-    return 0
-  fi
-  if [[ "${hostname}" == *"int-srv2"* || "${hostname}" == *"srv2" ]]; then
-    printf 'srv2\n'
-    return 0
-  fi
-  return 1
-}
-
 set_env_value() {
   local file="$1" key="$2" value="$3"
   python3 - "$file" "$key" "$value" <<'PY'
@@ -212,7 +180,6 @@ while [[ $# -gt 0 ]]; do
     --env-prefix) ENV_PREFIX="$2"; shift 2 ;;
     --base-dir) BASE_DIR="$2"; shift 2 ;;
     --lab-dir) LAB_DIR="$2"; shift 2 ;;
-    --role) ROLE="$2"; shift 2 ;;
     --owner) OWNER="$2"; shift 2 ;;
     --group) GROUP="$2"; shift 2 ;;
     --extra-packages) EXTRA_PACKAGES="$2"; shift 2 ;;
@@ -243,19 +210,6 @@ fi
 
 install_dependencies
 
-if [[ -z "${ROLE}" ]]; then
-  if ROLE="$(detect_role)"; then
-    echo "Detected role: ${ROLE}"
-  else
-    prompt_for_role
-  fi
-fi
-
-if [[ "${ROLE}" != "srv1" && "${ROLE}" != "srv2" ]]; then
-  echo "Invalid role: ${ROLE}. Expected srv1 or srv2." >&2
-  exit 1
-fi
-
 for command in "python${PYTHON_VERSION}" git docker; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "Missing required command: ${command}" >&2
@@ -271,7 +225,7 @@ if ! have_buildx; then
   exit 1
 fi
 
-RUNTIME_DIR="${BASE_DIR}/${PRODUCT_NAME}-${ROLE}"
+RUNTIME_DIR="${BASE_DIR}/${PRODUCT_NAME}"
 
 run_cmd mkdir -p "${RUNTIME_DIR}" "${LAB_DIR}/docker-config" "${LAB_DIR}/repos" "${LAB_DIR}/fixtures" "${LAB_DIR}/results"
 run_cmd chown -R "${OWNER}:${GROUP}" "${RUNTIME_DIR}" "${LAB_DIR}"
@@ -285,7 +239,6 @@ if [[ ! -f "${LAB_DIR}/lab.env" ]]; then
     echo "Created empty ${LAB_DIR}/lab.env."
   fi
 fi
-set_env_value "${LAB_DIR}/lab.env" "${ENV_PREFIX}_LAB_ROLE" "${ROLE}"
 set_env_value "${LAB_DIR}/lab.env" "${ENV_PREFIX}_RUNTIME_DIR" "${RUNTIME_DIR}"
 run_cmd chown "${OWNER}:${GROUP}" "${LAB_DIR}/lab.env"
 
@@ -295,7 +248,7 @@ run_cmd "${LAB_DIR}/.venv/bin/pip" install --upgrade pip
 run_cmd "${LAB_DIR}/.venv/bin/pip" install -r "${LAB_DIR}/se-lab/requirements.txt"
 run_cmd chown -R "${OWNER}:${GROUP}" "${LAB_DIR}/.venv"
 
-echo "Preparing runtime compose layout for role ${ROLE}..."
+echo "Preparing runtime compose layout..."
 "${LAB_DIR}/.venv/bin/python" - "${LAB_DIR}" "${PRODUCT_NAME}" "${ENV_PREFIX}" <<'PY'
 import sys
 from pathlib import Path
@@ -306,12 +259,12 @@ configure(repo_root=Path(lab_dir), product_name=product_name, env_prefix=env_pre
 from agent import common
 common.ensure_layout()
 common.sync_runtime_compose()
-print(f"Prepared {common.role_summary()}.")
+print(f"Prepared {common.runtime_summary()}.")
 print(f"Runtime env file path: {common.runtime_env_file()}.")
 if common.runtime_compose_file().exists():
     print(f"Compose will run from {common.runtime_compose_file()}.")
 else:
-    print(f"No compose template is registered yet for role {common.current_role()}.")
+    print("No compose template is registered yet.")
 PY
 
 echo ""
@@ -360,7 +313,7 @@ if [[ "${preflight_failed}" -ne 0 ]]; then
 fi
 
 echo ""
-echo "Lab environment prepared under ${BASE_DIR} for role ${ROLE}."
+echo "Lab environment prepared under ${BASE_DIR}."
 echo "Next steps:"
 echo "  1. Edit ${LAB_DIR}/lab.env with your site-specific values."
 echo "  2. cd ${LAB_DIR} && ./lab discover"

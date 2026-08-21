@@ -1,4 +1,4 @@
-"""`lab down` — stop the current role's compose stack."""
+"""`lab down` — stop the compose stack."""
 
 from __future__ import annotations
 
@@ -9,9 +9,8 @@ from ..config import Config
 from .. import common as lab_common
 
 
-@registry.command("down", help="Stop the current role's compose stack")
+@registry.command("down", help="Stop the compose stack")
 def handle_down(args: argparse.Namespace, config: Config) -> int:
-    role = lab_common.current_role()
     lab_common.compose_down()
-    print(f"{role} compose stack stopped.", flush=True)
+    print("Compose stack stopped.", flush=True)
     return 0

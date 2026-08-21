@@ -4,7 +4,6 @@ import socket
 from dataclasses import dataclass
 
 from .config import Config, load_config
-from . import common as lab_common
 from .runtime import REPO_ROOT
 
 
@@ -32,10 +31,6 @@ class AppContext:
     @property
     def hostname(self) -> str:
         return current_hostname()
-
-    @property
-    def role(self) -> str:
-        return lab_common.current_role()
 
     @property
     def repo_root(self):

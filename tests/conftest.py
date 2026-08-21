@@ -9,7 +9,7 @@ keeps the same ordering guarantee.
 
 All self-tests share one fixture "product lab" root for the whole session:
 a scratch temp directory standing in for what would normally be a real
-product lab's checkout, with its own docker-config/srv1/docker-compose.yaml
+product lab's checkout, with its own docker-config/docker-compose.yaml
 so compose-dependent functions have a template to find. <ENV_PREFIX>_RUNTIME_DIR
 is pointed inside that same temp directory (not the sibling default) so
 everything this session touches stays under one directory, removed at the end.
@@ -37,7 +37,7 @@ def pytest_configure(config: pytest.Config) -> None:
     global _scratch_root
     _scratch_root = Path(tempfile.mkdtemp(prefix="se-lab-selftest-"))
 
-    docker_config = _scratch_root / "docker-config" / "srv1"
+    docker_config = _scratch_root / "docker-config"
     docker_config.mkdir(parents=True)
     (docker_config / "docker-compose.yaml").write_text(
         "services:\n  noop:\n    image: alpine:latest\n    command: [\"true\"]\n",
