@@ -140,6 +140,29 @@ Schema is product-agnostic. Product labs write results using the `RunContext` AP
 - AI metrics log (task type, model, latency, tokens)
 - Drift warnings when declared suite totals don't match actual
 
+### Bootstrap & Dependencies
+
+The design goal is: run the setup script, get a fully working test environment, with no manual
+"install whatever's missing" step afterward. That only holds if the interpreter version and
+every third-party dependency are declared and installed by the tooling — not inherited from
+whatever a given base image happens to carry.
+
+- **Python 3.12+, enforced** via `pyproject.toml`'s `requires-python`, not just documented.
+  se-lab's minimum floor is set by real language features in use (`datetime.UTC` needs 3.11,
+  `dataclass(slots=True)` needs 3.10); 3.12 is the version actually validated, and pinning
+  above the true floor is easier to relax later than to tighten.
+- **Third-party dependencies are pinned in `requirements.txt`** (`PyYAML`, `requests`) and
+  installed into a per-lab `.venv` — never assumed present, never installed system-wide. A
+  config file that fails to parse because a dependency is missing must raise, naming the file
+  and the fix — not silently fall back to defaults. (`agent/config.py` does this for YAML.)
+- **`setup_vm.sh`** (bootstrap, in progress) installs `python3.12` explicitly rather than a
+  bare `python3`, creates `.venv`, installs `requirements.txt` into it, and the `./lab` shim
+  execs that interpreter — so every entry path gets the pinned versions, not the system default.
+- **A preflight self-check** runs at the end of setup and prints a PASS/FAIL summary: Python
+  version, each dependency importable, Docker/Compose v2/Buildx present, and the docker group
+  membership actually usable without a re-login. The setup script should be able to say whether
+  it succeeded, not leave that to be discovered at first use.
+
 ## Configuration (`lab.env`)
 
 All server-specific values live here. Never committed.

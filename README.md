@@ -43,18 +43,28 @@ lab.env  (per-server, gitignored — the only private layer)
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.12+ — enforced via `pyproject.toml`'s `requires-python`, not just documented
 - Docker 24+
 - A `lab.env` file (see `lab.env.example`)
+
+Third-party Python dependencies (`PyYAML`, `requests`) are pinned in `requirements.txt` and
+installed into a `.venv`, not assumed to already be present on the host. This is deliberate:
+se-lab runs on hosts you don't control, so nothing it needs may depend on what a particular
+base image happens to carry.
 
 ## Quick start
 
 ```bash
 git clone git@github.com:Sydney-Elvis/se-lab.git
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp lab.env.example lab.env
 # edit lab.env with your server-specific values
 ./lab status
 ```
+
+Setup automation (`setup_vm.sh`) that performs the above plus dependency installation and an
+environment preflight check is in progress — see `.ai_docs/roadmap.md`'s bootstrap item. Until
+it lands, the steps above are manual.
 
 ## Status
 
