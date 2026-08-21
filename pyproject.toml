@@ -1,0 +1,12 @@
+[project]
+name = "se-lab"
+version = "0.1.0"
+description = "Generic integration test harness framework for self-hosted software projects."
+requires-python = ">=3.12"
+dependencies = [
+    "PyYAML~=6.0",
+    "requests~=2.31",
+]
+
+[tool.setuptools]
+packages = ["agent"]

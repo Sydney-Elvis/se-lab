@@ -218,8 +218,16 @@ def _load_structured_file(path: Path) -> dict[str, Any]:
 
     try:
         import yaml  # type: ignore
-    except ImportError:
-        return {}
+    except ImportError as exc:
+        # A present-but-unparseable file must fail loudly, not degrade to defaults.
+        # This file exists and was meant to override config — silently ignoring it
+        # (the previous behavior) runs the lab on a different configuration than
+        # the one on disk, with no indication anything is wrong.
+        raise RuntimeError(
+            f"{path} exists but PyYAML is not installed, so it cannot be read. "
+            "Install dependencies with 'pip install -r requirements.txt' "
+            "(see the lab's .venv setup) or remove this file."
+        ) from exc
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return data if isinstance(data, dict) else {}
 

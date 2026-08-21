@@ -1,0 +1,6 @@
+# Runtime dependencies for se-lab and any product lab built on it.
+#
+# Installed into the lab's .venv by setup_vm.sh — see that script's venv step.
+# Keep in sync with pyproject.toml's [project.dependencies].
+PyYAML~=6.0
+requests~=2.31
