@@ -17,6 +17,13 @@ lifecycle above: they support automated test flows (bring a client up, assert
 an expected outcome occurred). A client with no verify() implementation is
 manual-only (e.g. Jellyfin for M3Undle) — se-lab falls back to checklist
 generation for those instead of failing.
+
+`reset_scenario_data()` backs `clients rollback --clean` / `clients pin
+--clean`: wiping and reseeding a client's test fixtures before restarting it
+on a different version. Optional because it's meaningful only for clients
+whose test data lives outside the container (M3Undle's srv2 scenario dirs);
+default is a no-op rather than abstract, so plugins that don't need it don't
+have to say so.
 """
 
 from __future__ import annotations
@@ -56,3 +63,7 @@ class ClientPlugin(ABC):
         as "manual-only" and falls back to checklist generation.
         """
         raise NotImplementedError(f"{self.name} has no automated verify(); manual-only client.")
+
+    def reset_scenario_data(self) -> None:
+        """Wipe and reseed this client's test fixtures. Default: no-op."""
+        return None
