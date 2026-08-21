@@ -82,6 +82,31 @@ def reset_database(service: str) -> None:
     lab_common.compose_up_only(service)
 
 
+def restart_stack_with_env(
+    env_overrides: dict[str, str],
+    *,
+    base_url: str,
+    container_name: str,
+    health_paths: Sequence[str] = ("/health",),
+) -> tuple[bool, str]:
+    """Set runtime env vars, restart the stack, wait for it to become healthy.
+
+    Hoisted from m3undle-lab's test_encryption_rotation.py and
+    test_auth_gate.py, which each carried an identical, verbatim copy of
+    this function -- restart-with-different-env-then-wait-healthy is a
+    generic test-harness need, not specific to either suite.
+    """
+    for key, value in env_overrides.items():
+        lab_common.set_runtime_env_var(key, value)
+    try:
+        lab_common.compose_up()
+    except Exception as exc:
+        return False, f"compose up failed: {exc}"
+    if not wait_up(base_url, container_name, health_paths=health_paths):
+        return False, "stack did not become healthy after restart"
+    return True, "restarted and healthy"
+
+
 def get_docker_gateway(network_name: str | None = None) -> str | None:
     """Gateway IP of the lab's Docker bridge network, or None if not found.
 
