@@ -23,6 +23,9 @@ lab.env  (per-server, gitignored — the only private layer)
 - Plugin interfaces for product repos to register commands, analysis hooks, and client verification steps
 
 **Product labs** provide:
+- The `lab` shim and `scripts/agent.py` entry point (copied from `docs/templates/`, filled in
+  with the product's own name — see Quick start; these can't live inside se-lab itself, since
+  they locate the product lab's root from their own file position)
 - Registered CLI commands (build, run, checklist, etc.)
 - Test suites
 - Docker Compose templates
@@ -54,17 +57,29 @@ base image happens to carry.
 
 ## Quick start
 
+se-lab is a submodule inside your product lab's own repo, not something you run standalone —
+`./lab` has to live at your product lab's root:
+
 ```bash
-git clone git@github.com:Sydney-Elvis/se-lab.git
-python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp lab.env.example lab.env
-# edit lab.env with your server-specific values
+# In your product lab's own repo:
+git submodule add git@github.com:Sydney-Elvis/se-lab.git se-lab
+cp se-lab/docs/templates/lab ./lab
+mkdir -p scripts && cp se-lab/docs/templates/scripts/agent.py scripts/agent.py
+chmod +x lab
+# Edit scripts/agent.py: replace the two CHANGE_ME placeholders with your
+# product's name and its env var prefix (e.g. "m3undle" / "M3UNDLE").
+
+python3.12 -m venv .venv && .venv/bin/pip install -r se-lab/requirements.txt
+cp se-lab/lab.env.example lab.env
+# edit lab.env with your server-specific values, and add your product's own
+# <ENV_PREFIX>_* settings (repo URL, GHCR image, etc.)
+
 ./lab status
 ```
 
-Setup automation (`setup_vm.sh`) that performs the above plus dependency installation and an
+Setup automation (`setup_vm.sh`) that performs the venv/dependency steps above plus an
 environment preflight check is in progress — see `.ai_docs/roadmap.md`'s bootstrap item. Until
-it lands, the steps above are manual.
+it lands, those steps are manual.
 
 ## Status
 
