@@ -8,7 +8,8 @@ import json
 from .. import registry
 from ..config import Config
 from ..context import current_hostname
-from ..runtime import REPO_ROOT, lab_common
+from .. import common as lab_common
+from ..runtime import REPO_ROOT
 
 
 @registry.command(
@@ -27,7 +28,7 @@ def handle_discover(args: argparse.Namespace, config: Config) -> int:
         "runtime_dir": str(lab_common.runtime_dir()),
         "runtime_compose_file": str(lab_common.runtime_compose_file()),
         "runtime_env_file": str(lab_common.runtime_env_file()),
-        "repo_dir": str(lab_common.REPO_DIR),
+        "repo_dir": str(lab_common.repo_dir()),
         "deployment_metadata": metadata,
         "available_commands": sorted(available),
     }

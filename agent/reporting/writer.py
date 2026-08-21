@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..runtime import REPORTS_DIR, lab_common
+from .. import common as lab_common
 
 
 def _sha256_text(text: str) -> str:
@@ -34,10 +34,11 @@ def _append_markdown_block(lines: list[str], value: Any) -> None:
 
 
 def write_run_report(run_id: str, payload: dict[str, Any]) -> tuple[Path, Path, Path]:
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    json_path = REPORTS_DIR / f"{run_id}.json"
-    md_path = REPORTS_DIR / f"{run_id}.md"
-    sha_path = REPORTS_DIR / f"{run_id}.sha256"
+    reports_dir = lab_common.reports_dir()
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    json_path = reports_dir / f"{run_id}.json"
+    md_path = reports_dir / f"{run_id}.md"
+    sha_path = reports_dir / f"{run_id}.sha256"
 
     json_text = json.dumps(payload, indent=2, sort_keys=True)
     json_path.write_text(json_text + "\n", encoding="utf-8")

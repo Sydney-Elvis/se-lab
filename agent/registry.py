@@ -34,6 +34,7 @@ _COMMANDS: dict[str, Command] = {}
 _CLIENTS: dict[str, type["ClientPlugin"]] = {}
 _ANALYSIS_PLUGIN: "AnalysisPlugin | None" = None
 _DATABASE_PLUGIN: "DatabasePlugin | None" = None
+_LAYOUT_HOOK: Callable[[], None] | None = None
 
 
 def command(
@@ -123,6 +124,24 @@ def get_analysis_plugin() -> "AnalysisPlugin":
 def set_database_plugin(plugin: "DatabasePlugin") -> None:
     global _DATABASE_PLUGIN
     _DATABASE_PLUGIN = plugin
+
+
+def set_layout_hook(hook: Callable[[], None]) -> None:
+    """Register extra bootstrap work to run at the end of common.ensure_layout().
+
+    Optional, default no-op. Backs whatever a product needs before its stack
+    can come up that isn't a generic directory (secrets, scenario fixtures,
+    per-client state repair) -- se-lab's ensure_layout() runs this without
+    knowing what it does, the same way it always ran unconditionally at the
+    top of every script in the original single-repo lab.
+    """
+    global _LAYOUT_HOOK
+    _LAYOUT_HOOK = hook
+
+
+def run_layout_hook() -> None:
+    if _LAYOUT_HOOK is not None:
+        _LAYOUT_HOOK()
 
 
 def get_database_plugin() -> "DatabasePlugin":

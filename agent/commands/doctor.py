@@ -12,7 +12,7 @@ from .. import registry
 from ..config import Config, get_setting
 from ..context import current_hostname
 from ..reporting.metrics import append_ai_call
-from ..runtime import lab_common
+from .. import common as lab_common
 from .support import run_ad_hoc_model
 
 

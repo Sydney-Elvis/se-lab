@@ -12,7 +12,7 @@ from typing import Any
 from .. import registry
 from ..config import Config
 from ..reporting.metrics import read_jsonl
-from ..runtime import REPORTS_DIR, lab_common
+from .. import common as lab_common
 from .support import read_json, resolve_summary_path
 
 
@@ -207,7 +207,7 @@ def _configure_metrics(parser: argparse.ArgumentParser) -> None:
     configure=_configure_metrics,
 )
 def handle_report_ai_metrics(args: argparse.Namespace, config: Config) -> int:
-    records = read_jsonl(REPORTS_DIR / "metrics" / "ai-calls.jsonl")
+    records = read_jsonl(lab_common.metrics_dir() / "ai-calls.jsonl")
     if args.task:
         records = [record for record in records if record.get("task_type") == args.task]
     if args.model:

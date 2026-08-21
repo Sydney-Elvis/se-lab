@@ -4,7 +4,8 @@ import socket
 from dataclasses import dataclass
 
 from .config import Config, load_config
-from .runtime import REPO_ROOT, lab_common
+from . import common as lab_common
+from .runtime import REPO_ROOT
 
 
 def current_hostname() -> str:

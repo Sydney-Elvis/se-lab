@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from .. import registry
 from ..clients.plugin import ClientPlugin
 from ..config import Config
-from ..runtime import lab_common
+from .. import common as lab_common
 from .support import confirm_action
 
 

@@ -9,7 +9,7 @@ from typing import Any
 
 from .. import registry
 from ..config import Config
-from ..runtime import REPORTS_DIR, lab_common
+from .. import common as lab_common
 from .support import read_json
 
 
@@ -83,12 +83,12 @@ def handle_artifacts_prune(args: argparse.Namespace, config: Config) -> int:
             shutil.rmtree(run_dir)
             deleted_runs += 1
         for suffix in (".json", ".md", ".sha256", ".failure-context.json"):
-            report_path = REPORTS_DIR / f"{run_id}{suffix}"
+            report_path = lab_common.reports_dir() / f"{run_id}{suffix}"
             if report_path.exists():
                 report_path.unlink()
     if args.purge_metrics:
         for metrics_name in ("ai-calls.jsonl", "ai-runs.jsonl"):
-            metrics_path = REPORTS_DIR / "metrics" / metrics_name
+            metrics_path = lab_common.metrics_dir() / metrics_name
             if metrics_path.exists():
                 metrics_path.unlink()
     checklists_deleted = 0

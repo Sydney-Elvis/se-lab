@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..runtime import METRICS_DIR
+from .. import common as lab_common
 
 
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
@@ -14,11 +14,11 @@ def append_jsonl(path: Path, record: dict[str, Any]) -> None:
 
 
 def append_ai_call(record: dict[str, Any]) -> None:
-    append_jsonl(METRICS_DIR / "ai-calls.jsonl", record)
+    append_jsonl(lab_common.metrics_dir() / "ai-calls.jsonl", record)
 
 
 def append_ai_run(record: dict[str, Any]) -> None:
-    append_jsonl(METRICS_DIR / "ai-runs.jsonl", record)
+    append_jsonl(lab_common.metrics_dir() / "ai-runs.jsonl", record)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:

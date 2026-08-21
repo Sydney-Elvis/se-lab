@@ -10,7 +10,7 @@ from typing import Any
 
 from ..config import Config
 from ..models.router import RoutedResult, run_task
-from ..runtime import lab_common
+from .. import common as lab_common
 
 
 def read_json(path: Path) -> Any:
