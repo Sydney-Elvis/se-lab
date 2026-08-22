@@ -36,6 +36,15 @@ INSTALL_DEPS=1
 EXTRA_PACKAGES=""
 PYTHON_VERSION="3.12"
 
+# Pinned, not "latest" -- reproducibility matters more here than always
+# having the newest release, and pinning avoids a runtime GitHub API call
+# (rate limits, network dependency) just to find a version number. Verified
+# checksums from https://github.com/docker/buildx/releases/download/v0.36.1/checksums.txt.
+# Bump deliberately, re-verify the checksums against that URL when you do.
+BUILDX_VERSION="0.36.1"
+BUILDX_SHA256_LINUX_AMD64="48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778"
+BUILDX_SHA256_LINUX_ARM64="5d0cafd9d16afe1a0f0d9529885344ace2cc99efdd531b6c783c5455a6001569"
+
 usage() {
   cat <<'EOF'
 Usage: bash scripts/setup_vm.sh --product-name NAME --env-prefix PREFIX
@@ -76,6 +85,59 @@ have_compose_v2() {
 
 have_buildx() {
   docker buildx version >/dev/null 2>&1
+}
+
+# Docker discovers CLI plugins per-user from ~/.docker/cli-plugins with no
+# root required at all -- this is Docker's own documented mechanism, not a
+# workaround. Used as a fallback when apt's docker-buildx/docker-buildx-plugin
+# packages aren't what installed it (chiefly the --skip-install-deps path,
+# where install_dependencies() -- and its root requirement -- never runs).
+install_buildx_userlocal() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    echo "No pinned user-local Buildx build for $(uname -s); install it manually." >&2
+    return 1
+  fi
+
+  local arch sha256
+  case "$(uname -m)" in
+    x86_64) arch="amd64"; sha256="${BUILDX_SHA256_LINUX_AMD64}" ;;
+    aarch64|arm64) arch="arm64"; sha256="${BUILDX_SHA256_LINUX_ARM64}" ;;
+    *)
+      echo "No pinned user-local Buildx build for $(uname -m); install it manually." >&2
+      return 1
+      ;;
+  esac
+
+  local owner_home plugin_dir plugin_path url tmp_file actual_sha256
+  owner_home="$(getent passwd "${OWNER}" | cut -d: -f6)"
+  if [[ -z "${owner_home}" ]]; then
+    echo "Could not resolve a home directory for ${OWNER}; skipping user-local Buildx install." >&2
+    return 1
+  fi
+  plugin_dir="${owner_home}/.docker/cli-plugins"
+  plugin_path="${plugin_dir}/docker-buildx"
+  url="https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-${arch}"
+  tmp_file="$(mktemp)"
+
+  echo "Installing Docker Buildx v${BUILDX_VERSION} (linux-${arch}) to ${plugin_path} (no root needed)..."
+  if ! curl -fsSL "${url}" -o "${tmp_file}"; then
+    echo "Download failed: ${url}" >&2
+    rm -f "${tmp_file}"
+    return 1
+  fi
+
+  actual_sha256="$(sha256sum "${tmp_file}" | awk '{print $1}')"
+  if [[ "${actual_sha256}" != "${sha256}" ]]; then
+    echo "Checksum mismatch for downloaded Buildx v${BUILDX_VERSION} binary -- expected" >&2
+    echo "${sha256}, got ${actual_sha256}. Refusing to install it." >&2
+    rm -f "${tmp_file}"
+    return 1
+  fi
+
+  run_cmd mkdir -p "${plugin_dir}"
+  run_cmd install -m 0755 "${tmp_file}" "${plugin_path}"
+  rm -f "${tmp_file}"
+  chown_if_needed "${OWNER}:${GROUP}" "${plugin_dir}" "${plugin_path}"
 }
 
 require_root() {
@@ -248,8 +310,14 @@ if ! have_compose_v2; then
   exit 1
 fi
 if ! have_buildx; then
-  echo "Missing Docker Buildx. Install a working 'docker buildx' plugin." >&2
-  exit 1
+  echo "Docker Buildx missing -- attempting a user-local install (no root needed)..."
+  install_buildx_userlocal || true
+  if ! have_buildx; then
+    echo "Missing Docker Buildx, and the user-local install did not resolve it." >&2
+    echo "Install it manually (apt-get install docker-buildx-plugin, or see" >&2
+    echo "https://github.com/docker/buildx#manual-download), then rerun." >&2
+    exit 1
+  fi
 fi
 
 RUNTIME_DIR="${BASE_DIR}/${PRODUCT_NAME}"
