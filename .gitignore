@@ -6,3 +6,11 @@ __pycache__/
 .pytest_cache/
 results/
 reports/
+
+# AI scratch / local agent state (carried between machines by Syncthing, not git)
+.claude/
+.codex/
+
+# Syncthing local metadata
+.stfolder/
+.stignore
