@@ -80,9 +80,36 @@ have_buildx() {
 
 require_root() {
   if [[ "${EUID}" -ne 0 ]]; then
-    echo "This script must run as root. Use sudo bash scripts/setup_vm.sh ..." >&2
+    echo "This script must run as root to install packages." >&2
+    echo "Run: sudo bash scripts/setup_vm.sh ..." >&2
+    echo "" >&2
+    echo "If you are an automated agent without a way to supply a sudo password" >&2
+    echo "interactively: STOP here rather than retrying or attempting a workaround." >&2
+    echo "sudo will hang waiting for input in a non-interactive session with no" >&2
+    echo "cached credential -- it will not fail cleanly, it will just not return." >&2
+    echo "Ask the operator to run the sudo command above themselves. If git," >&2
+    echo "python${PYTHON_VERSION}, docker, compose, and buildx are already installed," >&2
+    echo "rerun this script with --skip-install-deps instead -- that path does not" >&2
+    echo "require root as long as ${LAB_DIR:-the lab directory} is already owned by" >&2
+    echo "the invoking user." >&2
     exit 1
   fi
+}
+
+# Only chown when it would actually change something -- an unprivileged user
+# cannot chown at all (even a same-owner no-op) without root/CAP_CHOWN on
+# Linux, so calling this unconditionally made --skip-install-deps still
+# require root in practice whenever the directory was already correctly
+# owned (the common case for an agent working in its own checkout).
+chown_if_needed() {
+  local owner_group="$1"
+  shift
+  local path
+  for path in "$@"; do
+    if [[ "$(stat -c '%U:%G' "${path}" 2>/dev/null)" != "${owner_group}" ]]; then
+      run_cmd chown -R "${owner_group}" "${path}"
+    fi
+  done
 }
 
 is_ubuntu_like() {
@@ -227,8 +254,25 @@ fi
 
 RUNTIME_DIR="${BASE_DIR}/${PRODUCT_NAME}"
 
-run_cmd mkdir -p "${RUNTIME_DIR}" "${LAB_DIR}/docker-config" "${LAB_DIR}/repos" "${LAB_DIR}/fixtures" "${LAB_DIR}/results"
-run_cmd chown -R "${OWNER}:${GROUP}" "${RUNTIME_DIR}" "${LAB_DIR}"
+# Same reasoning as chown_if_needed(): mkdir -p on paths that already exist
+# is a no-op and needs no privilege at all. Only the genuinely-missing ones
+# need creating, and creating them may need root if their parent (e.g. a
+# root-owned /opt) isn't writable by the invoking user -- fail with the same
+# actionable hint as require_root() in that case, not a raw mkdir error.
+missing_dirs=()
+for dir in "${RUNTIME_DIR}" "${LAB_DIR}/docker-config" "${LAB_DIR}/repos" "${LAB_DIR}/fixtures" "${LAB_DIR}/results"; do
+  [[ -d "${dir}" ]] || missing_dirs+=("${dir}")
+done
+if [[ "${#missing_dirs[@]}" -gt 0 ]]; then
+  if ! run_cmd mkdir -p "${missing_dirs[@]}" 2>/dev/null; then
+    echo "Could not create: ${missing_dirs[*]}" >&2
+    echo "This needs root if ${BASE_DIR} isn't writable by the invoking user." >&2
+    echo "See the sudo guidance printed by the missing-package check above (or" >&2
+    echo "rerun as root/sudo if this is the first thing to fail)." >&2
+    exit 1
+  fi
+fi
+chown_if_needed "${OWNER}:${GROUP}" "${RUNTIME_DIR}" "${LAB_DIR}"
 
 if [[ ! -f "${LAB_DIR}/lab.env" ]]; then
   if [[ -f "${LAB_DIR}/lab.env.example" ]]; then
@@ -240,13 +284,13 @@ if [[ ! -f "${LAB_DIR}/lab.env" ]]; then
   fi
 fi
 set_env_value "${LAB_DIR}/lab.env" "${ENV_PREFIX}_RUNTIME_DIR" "${RUNTIME_DIR}"
-run_cmd chown "${OWNER}:${GROUP}" "${LAB_DIR}/lab.env"
+chown_if_needed "${OWNER}:${GROUP}" "${LAB_DIR}/lab.env"
 
 echo "Creating .venv and installing dependencies..."
 run_cmd "python${PYTHON_VERSION}" -m venv "${LAB_DIR}/.venv"
 run_cmd "${LAB_DIR}/.venv/bin/pip" install --upgrade pip
 run_cmd "${LAB_DIR}/.venv/bin/pip" install -r "${LAB_DIR}/se-lab/requirements.txt"
-run_cmd chown -R "${OWNER}:${GROUP}" "${LAB_DIR}/.venv"
+chown_if_needed "${OWNER}:${GROUP}" "${LAB_DIR}/.venv"
 
 echo "Preparing runtime compose layout..."
 "${LAB_DIR}/.venv/bin/python" - "${LAB_DIR}" "${PRODUCT_NAME}" "${ENV_PREFIX}" <<'PY'
@@ -302,7 +346,19 @@ if have_buildx; then
 else
   check "docker buildx" 1 "missing"
 fi
-if sudo -u "${OWNER}" docker info >/dev/null 2>&1; then
+
+# Only actually invoke sudo when switching user (running as root, checking a
+# different target user). When already running as OWNER (the non-root path
+# this whole script now supports), check directly -- sudo -u samecurrentuser
+# still goes through sudo's auth path and can hang non-interactively for no
+# reason, same failure shape as require_root() above. -n makes the root case
+# fail fast instead of hanging too, rather than silently blocking forever.
+if [[ "${EUID}" -eq 0 ]]; then
+  docker_check=(sudo -n -u "${OWNER}" docker info)
+else
+  docker_check=(docker info)
+fi
+if "${docker_check[@]}" >/dev/null 2>&1; then
   check "docker socket as ${OWNER}" 0 "usable now"
 else
   check "docker socket as ${OWNER}" 1 "not usable yet -- log out and back in"
