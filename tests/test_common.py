@@ -109,6 +109,15 @@ def test_resolve_setting_precedence(monkeypatch, scratch_root):
     assert lab_common.resolve_setting("PROBE_SETTING", explicit="from-arg") == "from-arg"
 
 
+def test_settings_passphrase_reads_env_prefixed_key(monkeypatch):
+    monkeypatch.delenv("SELFTEST_SETTINGS_PASSPHRASE", raising=False)
+    with pytest.raises(SystemExit, match="Missing required setting SELFTEST_SETTINGS_PASSPHRASE"):
+        lab_common.settings_passphrase()
+    assert lab_common.settings_passphrase(required=False) is None
+    monkeypatch.setenv("SELFTEST_SETTINGS_PASSPHRASE", "lab-only-value")
+    assert lab_common.settings_passphrase() == "lab-only-value"
+
+
 def test_client_version_history_roundtrip():
     assert lab_common.read_client_version_history() == {}
     lab_common.push_client_version_record("fakeclient", {"version": "1.0.0"})

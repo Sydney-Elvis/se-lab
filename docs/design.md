@@ -186,6 +186,15 @@ registry.set_settings_plugin(MyProductSettings())
 Return `"unsupported"` from `capability()` when a deployed image has not exposed the feature.
 se-lab will then stop before it calls either operation.
 
+Settings archives are expected to be encrypted/authenticated under a passphrase (they carry live
+provider/integration secrets as a portable, potentially fixture-checked-in file — see
+`.ai_docs/settings-backup-restore-plan.md`). `export_settings`/`import_settings` deliberately take
+no passphrase parameter, so this stays the product's own concern rather than a change to the ABC:
+call `agent.common.settings_passphrase()` from inside your implementation, which reads
+`<ENV_PREFIX>_SETTINGS_PASSPHRASE` via the same env/lab.env precedence as every other
+ENV_PREFIX-parametrized setting. Document the pinned lab value in your product lab's own
+`lab.env.example`, alongside its other `<ENV_PREFIX>_*` variables.
+
 ### Result Tracking (`scripts/common/harness/results.py`)
 
 Each test run produces a `RunContext` that records:

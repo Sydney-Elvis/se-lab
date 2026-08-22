@@ -99,6 +99,11 @@ def _ghcr_image_env_key() -> str:
     return f"{env_prefix}_GHCR_IMAGE"
 
 
+def _settings_passphrase_env_key() -> str:
+    _, env_prefix = runtime.require_product_config()
+    return f"{env_prefix}_SETTINGS_PASSPHRASE"
+
+
 # ---------------------------------------------------------------------------
 # formatting / progress
 # ---------------------------------------------------------------------------
@@ -190,6 +195,23 @@ def resolve_setting(
             f"add it to {LAB_ENV_FILE}, or pass the matching CLI flag."
         )
     return None
+
+
+def settings_passphrase(*, required: bool = True) -> str | None:
+    """The pinned passphrase settings archives are encrypted/authenticated under.
+
+    Read via the standard env/lab.env precedence under
+    ``<ENV_PREFIX>_SETTINGS_PASSPHRASE``. A ``SettingsPlugin`` implementation
+    calls this instead of inventing its own env var name -- every product lab
+    then shares one naming convention, and ``export_settings``/
+    ``import_settings`` stay free of a passphrase parameter on the ABC itself
+    (see .ai_docs/settings-backup-restore-plan.md's encryption section: this
+    is lab-automation infrastructure, not product security material, so it
+    belongs here the same way the other ENV_PREFIX-parametrized helpers above
+    do -- se-lab still never generates or manages the value, only names where
+    to find it).
+    """
+    return resolve_setting(_settings_passphrase_env_key(), required=required)
 
 
 def write_env_file_values(path: Path, updates: dict[str, str]) -> None:
