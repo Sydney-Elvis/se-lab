@@ -104,6 +104,13 @@ both people and integration suites:
 The product plugin owns archive content and API calls; se-lab standardizes the CLI workflow. See
 `docs/design.md` for the complete contract.
 
+**A product lab's own README should link to this Quick Start for environment setup, not restate
+or re-derive it.** Two real product labs drifted from here independently before this note existed
+(2026-08-22) — one silently dropped the venv step, the other hand-copied it and would have gone
+stale the next time this section changed. A product lab's README should still document its own
+product-specific steps (its own env vars, its own first commands) — just point at this section
+for "how do I get dependencies installed," rather than duplicating it.
+
 On a fresh VM, `scripts/setup_vm.sh` (in se-lab) can do the venv/dependency steps above for
 you, plus install git/python3.12/docker/compose, create required directories, and run a
 preflight check:
