@@ -12,6 +12,7 @@ import pytest
 import agent.cli as cli
 from agent import registry
 from agent.analysis.plugin import AnalysisPlugin
+from agent.settings.plugin import SettingsPlugin
 
 
 def test_cli_loads_and_registers_builtin_commands():
@@ -19,7 +20,7 @@ def test_cli_loads_and_registers_builtin_commands():
     top_names = {c.name for c in top}
     assert {"discover", "down"} <= top_names
     grouped_names = {c.name for subs in groups.values() for c in subs}
-    assert {"artifacts list", "doctor config", "report latest", "clients status"} <= grouped_names
+    assert {"artifacts list", "doctor config", "report latest", "clients status", "settings export", "settings import"} <= grouped_names
 
 
 def test_build_parser_accepts_help_without_error():
@@ -101,3 +102,49 @@ def test_main_eval_ai_uses_analysis_plugin_eval_cases(monkeypatch, capsys):
     assert code == 0
     out = capsys.readouterr().out
     assert '"matches": 1' in out
+
+
+class _FakeSettings(SettingsPlugin):
+    def export_settings(self, out_path):
+        out_path.write_text("settings archive", encoding="utf-8")
+
+    def import_settings(self, archive_path):
+        return {"applied": {"providers": 2}, "archive": archive_path.name}
+
+    def default_export_filename(self):
+        return "lab-settings.fake"
+
+
+def test_main_settings_export_uses_artifacts_dir(monkeypatch, tmp_path, capsys):
+    registry.set_settings_plugin(_FakeSettings())
+    monkeypatch.setenv("LAB_ARTIFACTS_DIR", str(tmp_path))
+
+    code = cli.main(["settings", "export"])
+
+    assert code == 0
+    output_path = tmp_path / "lab-settings.fake"
+    assert output_path.read_text(encoding="utf-8") == "settings archive"
+    assert str(output_path) in capsys.readouterr().out
+
+
+def test_main_settings_import_prints_applied_summary(tmp_path, capsys):
+    registry.set_settings_plugin(_FakeSettings())
+    archive_path = tmp_path / "baseline.fake"
+    archive_path.write_text("settings archive", encoding="utf-8")
+
+    code = cli.main(["settings", "import", str(archive_path)])
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert '"providers": 2' in output
+    assert '"archive": "baseline.fake"' in output
+
+
+def test_main_settings_stops_when_target_does_not_support_it(tmp_path):
+    class UnsupportedSettings(_FakeSettings):
+        def capability(self):
+            return "unsupported"
+
+    registry.set_settings_plugin(UnsupportedSettings())
+    with pytest.raises(SystemExit, match="unavailable on the target instance"):
+        cli.main(["settings", "export", "--out", str(tmp_path / "nope.fake")])

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .config import Config
     from .analysis.plugin import AnalysisPlugin
     from .database.plugin import DatabasePlugin
+    from .settings.plugin import SettingsPlugin
 
 CommandHandler = Callable[[argparse.Namespace, "Config"], int]
 ParserConfigurer = Callable[[argparse.ArgumentParser], None]
@@ -34,6 +35,7 @@ _COMMANDS: dict[str, Command] = {}
 _CLIENTS: dict[str, type["ClientPlugin"]] = {}
 _ANALYSIS_PLUGIN: "AnalysisPlugin | None" = None
 _DATABASE_PLUGIN: "DatabasePlugin | None" = None
+_SETTINGS_PLUGIN: "SettingsPlugin | None" = None
 _LAYOUT_HOOK: Callable[[], None] | None = None
 
 
@@ -152,3 +154,18 @@ def get_database_plugin() -> "DatabasePlugin":
             "import time to support them."
         )
     return _DATABASE_PLUGIN
+
+
+def set_settings_plugin(plugin: "SettingsPlugin") -> None:
+    """Register the product's settings archive implementation."""
+    global _SETTINGS_PLUGIN
+    _SETTINGS_PLUGIN = plugin
+
+
+def get_settings_plugin() -> "SettingsPlugin":
+    if _SETTINGS_PLUGIN is None:
+        raise SystemExit(
+            "No SettingsPlugin registered. The product lab must call "
+            "registry.set_settings_plugin(...) at import time before 'lab settings' commands run."
+        )
+    return _SETTINGS_PLUGIN

@@ -8,6 +8,6 @@ agent/registry.py.
 
 from __future__ import annotations
 
-from . import artifacts, clients, discover, doctor, down, eval, report
+from . import artifacts, clients, discover, doctor, down, eval, report, settings
 
-__all__ = ["artifacts", "clients", "discover", "doctor", "down", "eval", "report"]
+__all__ = ["artifacts", "clients", "discover", "doctor", "down", "eval", "report", "settings"]

@@ -33,7 +33,7 @@
 
 ### CLI Framework (`agent/`)
 
-The `./lab` entry point delegates to a Python agent package. Product repos register their commands at startup; `se-lab` provides the runtime (argument parsing, dashboard rendering, progress bars, confirmation prompts, AI routing).
+The `./lab` entry point delegates to a Python agent package. Product repos register their commands and product-specific plugins at startup; `se-lab` provides the runtime (argument parsing, dashboard rendering, progress bars, confirmation prompts, AI routing).
 
 **Tier model for AI tasks:**
 
@@ -133,6 +133,58 @@ class CWAClient(ClientPlugin):
 ```
 
 For clients that are manual-only (e.g. Jellyfin for M3Undle), `verify()` is not implemented and `se-lab` falls through to checklist generation.
+
+### Settings Archives (`./lab settings`)
+
+Product applications own their settings archive format and API calls. se-lab provides the common
+command surface through a registered `SettingsPlugin`, which makes the same settings-only archive
+workflow usable for both standalone lab setup and automated integration verification:
+
+```bash
+# Seed a fresh disposable instance before standalone exploration.
+lab run --fresh
+lab settings import fixtures/settings/lab-baseline.<product-extension>
+
+# In an automated integration suite: export, reset, import, then verify connections.
+lab settings export --out "$LAB_ARTIFACTS_DIR/settings-under-test.<product-extension>"
+lab recreate --fresh
+lab settings import "$LAB_ARTIFACTS_DIR/settings-under-test.<product-extension>"
+```
+
+`lab settings export [--out PATH]` always produces a settings-scoped archive. Without `--out`,
+the archive is written under `LAB_ARTIFACTS_DIR` (or the standard ad-hoc artifacts directory)
+using the plugin's default filename. `lab settings import <path>` applies an archive and prints
+the plugin's structured summary of changed entities.
+
+```python
+from pathlib import Path
+
+from agent import registry
+from agent.settings.plugin import SettingsPlugin
+
+
+class MyProductSettings(SettingsPlugin):
+    def export_settings(self, out_path: Path) -> None:
+        # Call the product's settings-only export API and write its archive here.
+        ...
+
+    def import_settings(self, archive_path: Path) -> dict:
+        # Call the product's settings-only import API and return applied entities/counts.
+        return {"entities": {"provider_settings": 2}}
+
+    def default_export_filename(self) -> str:
+        return "settings-backup.myproduct"
+
+    def capability(self) -> str:
+        # Probe the deployed API/version or feature flag when support is conditional.
+        return "settings-only"
+
+
+registry.set_settings_plugin(MyProductSettings())
+```
+
+Return `"unsupported"` from `capability()` when a deployed image has not exposed the feature.
+se-lab will then stop before it calls either operation.
 
 ### Result Tracking (`scripts/common/harness/results.py`)
 

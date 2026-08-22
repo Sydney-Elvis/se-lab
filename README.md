@@ -19,9 +19,12 @@ lab.env  (per-server, gitignored — the only private layer)
 - Docker Compose lifecycle (deploy, pull, health-wait, teardown)
 - Client app orchestration (`./lab clients status/update/rollback/pin` today; `up`/`down`/`reset`
   are designed — see `docs/design.md` — but not yet implemented)
+- Settings archive orchestration (`./lab settings export/import`) for automated backup/reset/import
+  verification and for seeding a freshly started instance before standalone testing
 - AI-assisted log analysis and failure classification via LiteLLM
 - Run result tracking and report generation
-- Plugin interfaces for product repos to register commands, analysis hooks, and client verification steps
+- Plugin interfaces for product repos to register commands, analysis hooks, client verification,
+  and settings archive operations
 
 **Product labs** provide:
 - The `lab` shim and `scripts/agent.py` entry point (copied from `docs/templates/`, filled in
@@ -83,6 +86,23 @@ own responsibility to register (see `docs/design.md`'s plugin interface example)
 of the Docker Compose helpers in `agent/common.py`. `./lab --help` lists whatever your product
 lab has registered so far; it's the right sanity check right after scaffolding, before you've
 written any commands of your own.
+
+When a product lab registers a `SettingsPlugin`, its settings-only archive flow is available to
+both people and integration suites:
+
+```bash
+# Seed a fresh disposable instance before standalone exploration.
+./lab run --fresh
+./lab settings import fixtures/settings/lab-baseline.<product-extension>
+
+# Automated verification: export settings, reset, import, then assert connectivity.
+./lab settings export --out "$LAB_ARTIFACTS_DIR/settings-under-test.<product-extension>"
+./lab recreate --fresh
+./lab settings import "$LAB_ARTIFACTS_DIR/settings-under-test.<product-extension>"
+```
+
+The product plugin owns archive content and API calls; se-lab standardizes the CLI workflow. See
+`docs/design.md` for the complete contract.
 
 On a fresh VM, `scripts/setup_vm.sh` (in se-lab) can do the venv/dependency steps above for
 you, plus install git/python3.12/docker/compose, create required directories, and run a

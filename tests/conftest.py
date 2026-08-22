@@ -79,6 +79,7 @@ def _isolated_registry():
     clients_before = dict(registry._CLIENTS)
     analysis_before = registry._ANALYSIS_PLUGIN
     database_before = registry._DATABASE_PLUGIN
+    settings_before = registry._SETTINGS_PLUGIN
     layout_before = registry._LAYOUT_HOOK
 
     yield
@@ -89,6 +90,7 @@ def _isolated_registry():
     registry._CLIENTS.update(clients_before)
     registry._ANALYSIS_PLUGIN = analysis_before
     registry._DATABASE_PLUGIN = database_before
+    registry._SETTINGS_PLUGIN = settings_before
     registry._LAYOUT_HOOK = layout_before
 
 

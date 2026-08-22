@@ -8,6 +8,7 @@ from agent import registry
 from agent.analysis.plugin import AnalysisPlugin
 from agent.clients.plugin import ClientPlugin
 from agent.database.plugin import DatabasePlugin
+from agent.settings.plugin import SettingsPlugin
 
 
 def test_top_level_command_registers_and_dispatches():
@@ -138,6 +139,32 @@ def test_database_plugin_set_and_reset():
 def test_database_plugin_is_abstract():
     with pytest.raises(TypeError):
         DatabasePlugin()
+
+
+class _FakeSettings(SettingsPlugin):
+    def export_settings(self, out_path):
+        out_path.write_text("settings archive", encoding="utf-8")
+
+    def import_settings(self, archive_path):
+        return {"archive": archive_path.name, "applied": {"settings": 1}}
+
+
+def test_settings_plugin_fails_loud_when_unset():
+    with pytest.raises(SystemExit, match="No SettingsPlugin registered"):
+        registry.get_settings_plugin()
+
+
+def test_settings_plugin_set_and_get():
+    plugin = _FakeSettings()
+    registry.set_settings_plugin(plugin)
+    assert registry.get_settings_plugin() is plugin
+    assert plugin.capability() == "settings-only"
+    assert plugin.default_export_filename() == "settings-backup"
+
+
+def test_settings_plugin_is_abstract():
+    with pytest.raises(TypeError):
+        SettingsPlugin()
 
 
 def test_layout_hook_default_is_a_harmless_noop():
