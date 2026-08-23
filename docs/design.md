@@ -195,6 +195,28 @@ call `agent.common.settings_passphrase()` from inside your implementation, which
 ENV_PREFIX-parametrized setting. Document the pinned lab value in your product lab's own
 `lab.env.example`, alongside its other `<ENV_PREFIX>_*` variables.
 
+### Webhook Receiver (`agent/webhook_receiver.py`)
+
+A generic test double for a product's outbound webhook/callback integrations. Not a plugin --
+there's no per-product behavior here, just a small local HTTP server that records every request
+it receives, with no knowledge of any particular payload shape:
+
+```python
+from agent.webhook_receiver import WebhookReceiver
+
+with WebhookReceiver() as receiver:
+    configure_product_webhook(f"http://{gateway_ip}:{receiver.port}/hook")
+    trigger_the_thing_that_should_fire_it()
+    request = receiver.wait_for_request(timeout=30.0)
+    assert request is not None
+    assert request.json()["event"] == "expected-event"
+```
+
+Binds `0.0.0.0` by default so a containerized product can reach it via `agent.container.get_docker_gateway()`'s
+IP, while the test process itself talks to it over `127.0.0.1`. `receiver.requests` and
+`receiver.clear()` inspect/reset what's been recorded so far; `wait_for_request(predicate=...)`
+polls until a matching request arrives or times out.
+
 ### Result Tracking (`scripts/common/harness/results.py`)
 
 Each test run produces a `RunContext` that records:
