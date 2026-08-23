@@ -7,7 +7,7 @@ import textwrap
 import pytest
 
 from agent.results import RunContext
-from agent.suites import Suite, discover_suites, run_suite, suite, suites_in_group
+from agent.suites import Suite, discover_suites, run_suite, run_suites, suite, suites_in_group
 
 
 def test_case_registers_in_declaration_order():
@@ -242,3 +242,67 @@ def test_discovery_order_is_by_declared_order_then_name(tmp_path):
     )
     discovered = discover_suites(tmp_path)
     assert [s.name for s in discovered] == ["early-suite", "a-suite", "z-suite"]
+
+
+def test_run_suites_writes_one_result_json_per_suite_and_reports_no_failure(tmp_path):
+    passing = suite("passing")
+
+    @passing.case("P-01")
+    def p1(ctx):
+        ctx.ok("P-01", "fine")
+
+    also_passing = suite("also-passing")
+
+    @also_passing.case("Q-01")
+    def q1(ctx):
+        ctx.ok("Q-01", "fine")
+
+    summary = run_suites([passing, also_passing], results_dir=tmp_path)
+
+    assert summary.failed is False
+    assert [r.suite_name for r in summary.results] == ["passing", "also-passing"]
+    assert (tmp_path / "results-passing.json").exists()
+    assert (tmp_path / "results-also-passing.json").exists()
+
+
+def test_run_suites_reports_failed_when_any_case_fails(tmp_path):
+    broken = suite("broken")
+
+    @broken.case("B-01")
+    def b1(ctx):
+        ctx.fail("B-01", "nope")
+
+    summary = run_suites([broken], results_dir=tmp_path)
+
+    assert summary.failed is True
+    assert summary.results[0].suite_name == "broken"
+
+
+def test_run_suites_reports_failed_on_setup_failure_without_drift(tmp_path):
+    broken_setup = suite("broken-setup")
+
+    @broken_setup.setup
+    def _setup():
+        raise RuntimeError("boom")
+
+    @broken_setup.case("S-01")
+    def s1(ctx):
+        ctx.ok("S-01", "unreachable")
+
+    summary = run_suites([broken_setup], results_dir=tmp_path)
+
+    assert summary.failed is True
+    assert summary.results[0].setup_ok is False
+    assert summary.results[0].drifted is False
+
+
+def test_run_suites_passes_base_context_through_to_cases(tmp_path):
+    s = suite("needs-context")
+
+    @s.case("C-01")
+    def c1(ctx, widget):
+        ctx.record("C-01", widget == "provided", f"widget={widget!r}")
+
+    summary = run_suites([s], results_dir=tmp_path, widget="provided")
+
+    assert summary.failed is False

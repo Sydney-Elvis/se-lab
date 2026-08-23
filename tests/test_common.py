@@ -118,6 +118,61 @@ def test_settings_passphrase_reads_env_prefixed_key(monkeypatch):
     assert lab_common.settings_passphrase() == "lab-only-value"
 
 
+def _stub_deploy_internals(monkeypatch):
+    """Mock every docker/git-touching step deploy_*() calls so these tests check
+    only the extra_compose_files plumbing, not real build/checkout behavior --
+    that needs real docker, exercised elsewhere (see docs on why mocked compose
+    tests aren't a substitute for that)."""
+    monkeypatch.setattr(lab_common, "ensure_repo_checkout", lambda repo_url: None)
+    monkeypatch.setattr(lab_common, "print_repo_summary", lambda repo_url: None)
+    monkeypatch.setattr(lab_common, "git_prepare_branch", lambda branch: None)
+    monkeypatch.setattr(lab_common, "git_prepare_tag", lambda tag: None)
+    monkeypatch.setattr(lab_common, "git_refresh_current_branch", lambda: "main")
+    monkeypatch.setattr(lab_common, "repo_head_commit", lambda: "deadbeef")
+    monkeypatch.setattr(lab_common, "docker_build", lambda *a, **kw: None)
+    monkeypatch.setattr(lab_common, "docker_pull", lambda *a, **kw: None)
+    monkeypatch.setattr(lab_common, "sync_runtime_compose", lambda: None)
+    monkeypatch.setattr(lab_common, "set_deployment_metadata", lambda *a, **kw: None)
+    calls: list[tuple] = []
+    monkeypatch.setattr(lab_common, "compose_up", lambda **kw: calls.append(kw))
+    monkeypatch.setenv("SELFTEST_REPO_URL", "https://example.invalid/repo.git")
+    monkeypatch.setenv("SELFTEST_GHCR_IMAGE", "ghcr.example.invalid/selftest")
+    return calls
+
+
+def test_deploy_branch_threads_extra_compose_files_to_compose_up(monkeypatch):
+    from pathlib import Path
+
+    calls = _stub_deploy_internals(monkeypatch)
+    extra = [Path("/tmp/override.yaml")]
+    lab_common.deploy_branch("main", extra_compose_files=extra)
+    assert calls == [{"extra_compose_files": extra}]
+
+
+def test_deploy_source_tag_threads_extra_compose_files_to_compose_up(monkeypatch):
+    from pathlib import Path
+
+    calls = _stub_deploy_internals(monkeypatch)
+    extra = [Path("/tmp/override.yaml")]
+    lab_common.deploy_source_tag("v1.0.0", extra_compose_files=extra)
+    assert calls == [{"extra_compose_files": extra}]
+
+
+def test_deploy_tag_threads_extra_compose_files_to_compose_up(monkeypatch):
+    from pathlib import Path
+
+    calls = _stub_deploy_internals(monkeypatch)
+    extra = [Path("/tmp/override.yaml")]
+    lab_common.deploy_tag("v1.0.0", extra_compose_files=extra)
+    assert calls == [{"extra_compose_files": extra}]
+
+
+def test_deploy_functions_default_extra_compose_files_to_empty(monkeypatch):
+    calls = _stub_deploy_internals(monkeypatch)
+    lab_common.deploy_branch("main")
+    assert calls == [{"extra_compose_files": ()}]
+
+
 def test_client_version_history_roundtrip():
     assert lab_common.read_client_version_history() == {}
     lab_common.push_client_version_record("fakeclient", {"version": "1.0.0"})

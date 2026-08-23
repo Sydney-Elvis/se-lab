@@ -171,6 +171,46 @@ def run_suite(target: Suite, ctx: RunContext, **base_context: Any) -> SuiteRunRe
     )
 
 
+@dataclass(slots=True)
+class SuitesRunSummary:
+    results: list[SuiteRunResult]
+    failed: bool
+
+
+def run_suites(suites: list[Suite], *, results_dir: Path, **base_context: Any) -> SuitesRunSummary:
+    """Run each suite in order: print a header, run it, print its summary,
+    write its JSON artifact, and track whether anything failed (a case
+    failure, a suite setup failure, or result-count drift).
+
+    Extracted 2026-08-23 from what m3undle_lab/commands.py and
+    family_librarian_lab/commands.py each hand-rolled as an almost-identical
+    loop -- a product's `run` command calls this instead of re-implementing
+    it. `**base_context` is whatever each suite's setup/cases need matched by
+    parameter name (e.g. `base_url=` for a shared-instance product,
+    `scenario_factory=` for one that isolates a fresh environment per case) --
+    this function doesn't need to know which.
+    """
+    results: list[SuiteRunResult] = []
+    failed = False
+    for target in suites:
+        print(f"\n--- Running suite: {target.name} ---", flush=True)
+        context = RunContext(target.name)
+        result = run_suite(target, context, **base_context)
+        context.print_summary()
+        context.write_json(results_dir / f"results-{target.name}.json")
+        if not result.setup_ok:
+            print(f"  Setup failed: {result.setup_error}", flush=True)
+        if result.drifted:
+            print(
+                f"  Result drift: expected {result.expected} registered cases, recorded {result.actual} outcomes.",
+                flush=True,
+            )
+        if context.failed_count or result.drifted or not result.setup_ok:
+            failed = True
+        results.append(result)
+    return SuitesRunSummary(results=results, failed=failed)
+
+
 def _import_module_from_path(path: Path):
     module_name = f"_selab_suite_{path.stem}_{next(_MODULE_COUNTER)}"
     spec = importlib.util.spec_from_file_location(module_name, path)

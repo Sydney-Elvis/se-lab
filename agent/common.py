@@ -870,7 +870,7 @@ def git_refresh_current_branch() -> str:
     return branch
 
 
-def deploy_branch(branch: str, repo_url: str | None = None) -> str:
+def deploy_branch(branch: str, repo_url: str | None = None, *, extra_compose_files: Sequence[Path] = ()) -> str:
     resolved_repo_url = resolve_setting(_repo_url_env_key(), explicit=repo_url, required=True)
     image = local_branch_image(branch)
     ensure_repo_checkout(resolved_repo_url)
@@ -880,12 +880,12 @@ def deploy_branch(branch: str, repo_url: str | None = None) -> str:
     docker_build(image, repo_dir(), source_revision=commit)
     sync_runtime_compose()
     set_deployment_metadata("branch", branch, image=image, source_commit=commit)
-    compose_up()
+    compose_up(extra_compose_files=extra_compose_files)
     print(f"Branch '{branch}' is deployed.", flush=True)
     return image
 
 
-def deploy_source_tag(tag: str, repo_url: str | None = None) -> str:
+def deploy_source_tag(tag: str, repo_url: str | None = None, *, extra_compose_files: Sequence[Path] = ()) -> str:
     """Build a release tag from source, as opposed to deploy_tag's GHCR pull.
 
     Recorded as source_type "source-tag" so a later metadata-driven deploy
@@ -900,12 +900,12 @@ def deploy_source_tag(tag: str, repo_url: str | None = None) -> str:
     docker_build(image, repo_dir(), source_revision=commit)
     sync_runtime_compose()
     set_deployment_metadata("source-tag", tag, image=image, source_commit=commit)
-    compose_up()
+    compose_up(extra_compose_files=extra_compose_files)
     print(f"Tag '{tag}' is built from source and deployed.", flush=True)
     return image
 
 
-def deploy_current_branch(repo_url: str | None = None) -> tuple[str, str]:
+def deploy_current_branch(repo_url: str | None = None, *, extra_compose_files: Sequence[Path] = ()) -> tuple[str, str]:
     resolved_repo_url = resolve_setting(_repo_url_env_key(), explicit=repo_url, required=True)
     ensure_repo_checkout(resolved_repo_url)
     print_repo_summary(resolved_repo_url)
@@ -915,18 +915,18 @@ def deploy_current_branch(repo_url: str | None = None) -> tuple[str, str]:
     docker_build(image, repo_dir(), source_revision=commit)
     sync_runtime_compose()
     set_deployment_metadata("branch", branch, image=image, source_commit=commit)
-    compose_up()
+    compose_up(extra_compose_files=extra_compose_files)
     print(f"Current checkout branch '{branch}' is deployed.", flush=True)
     return branch, image
 
 
-def deploy_tag(tag: str, image_repo: str | None = None) -> str:
+def deploy_tag(tag: str, image_repo: str | None = None, *, extra_compose_files: Sequence[Path] = ()) -> str:
     resolved_image_repo = resolve_setting(_ghcr_image_env_key(), explicit=image_repo, required=True)
     image = ghcr_tag_image(tag, resolved_image_repo)
     docker_pull(image)
     sync_runtime_compose()
     set_deployment_metadata("tag", tag, image=image)
-    compose_up()
+    compose_up(extra_compose_files=extra_compose_files)
     print(f"Tag '{tag}' is deployed.", flush=True)
     return image
 
