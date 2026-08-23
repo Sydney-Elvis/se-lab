@@ -344,9 +344,17 @@ def handle_clients_down(args: argparse.Namespace, config: Config) -> int:
         print("No client apps active — nothing to stop.", flush=True)
         return 0
 
+    # Compose's profile filtering means a plain `down` with COMPOSE_PROFILES already
+    # cleared can't see these containers -- they're still defined in the compose files
+    # (so --remove-orphans doesn't treat them as orphans either), just not in the
+    # profile scope the down step would be run under. Stop/remove them by explicit
+    # service name instead, which bypasses profile filtering; the product stack is
+    # never touched, so there's no need to recreate it here.
+    services = [registry.get_client(name)().compose_service for name in active]
     print(f"Stopping client profiles: {', '.join(active)}", flush=True)
+    lab_common.run(lab_common.compose_command("stop", *services, extra_compose_files=extra_files))
+    lab_common.run(lab_common.compose_command("rm", "-f", *services, extra_compose_files=extra_files))
     lab_common.set_runtime_env_values({"COMPOSE_PROFILES": ""})
-    lab_common.compose_up(extra_compose_files=extra_files)
     print("Client apps stopped and removed; product stack still running.", flush=True)
     return 0
 

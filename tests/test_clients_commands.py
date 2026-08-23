@@ -1,7 +1,7 @@
 """agent/commands/clients.py: `up`/`down`/`reset` -- argument validation and call
-wiring, without needing real docker (lab_common.compose_up is monkeypatched
-throughout; `status`/`update`/`rollback`/`pin` already existed before this file and
-are exercised elsewhere)."""
+wiring, without needing real docker (lab_common.compose_up/run are monkeypatched;
+`status`/`update`/`rollback`/`pin` already existed before this file and are
+exercised elsewhere)."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def test_clients_down_with_no_active_clients_is_a_noop(monkeypatch, capsys):
     registry.set_client_compose_files(_FAKE_COMPOSE_FILES)
     monkeypatch.setattr(lab_common, "active_clients", lambda: [])
     called = []
-    monkeypatch.setattr(lab_common, "compose_up", lambda **_kw: called.append(True))
+    monkeypatch.setattr(lab_common, "run", lambda *_a, **_kw: called.append(True))
 
     code = cli.main(["clients", "down"])
 
@@ -97,16 +97,27 @@ def test_clients_down_with_no_active_clients_is_a_noop(monkeypatch, capsys):
     assert "nothing to stop" in capsys.readouterr().out
 
 
-def test_clients_down_clears_profiles_and_recreates(fake_client, monkeypatch):
+def test_clients_down_stops_and_removes_by_explicit_service_name(fake_client, monkeypatch):
+    # Regression test: an earlier version cleared COMPOSE_PROFILES and relied on
+    # `compose_up()`'s down+up cycle to tear the clients down. Real docker showed that
+    # doesn't work -- Compose's profile filtering means a `down` run under the *new*
+    # (empty) profile scope can't see containers from the *previous* scope, and
+    # --remove-orphans doesn't catch them either since they're still defined in the
+    # compose files, just profile-gated. `down` must target services by explicit name.
     registry.set_client_compose_files(_FAKE_COMPOSE_FILES)
     monkeypatch.setattr(lab_common, "active_clients", lambda: ["fakeclient"])
     profiles = {}
     monkeypatch.setattr(lab_common, "set_runtime_env_values", lambda values: profiles.update(values))
-    monkeypatch.setattr(lab_common, "compose_up", lambda **_kw: None)
+    commands = []
+    monkeypatch.setattr(lab_common, "run", lambda cmd, **_kw: commands.append(cmd))
 
-    cli.main(["clients", "down"])
+    code = cli.main(["clients", "down"])
 
+    assert code == 0
     assert profiles["COMPOSE_PROFILES"] == ""
+    stop_cmd, rm_cmd = commands
+    assert stop_cmd[-2:] == ["stop", "fakeclient"]
+    assert rm_cmd[-3:] == ["rm", "-f", "fakeclient"]
 
 
 def test_clients_reset_requires_a_target(monkeypatch):
