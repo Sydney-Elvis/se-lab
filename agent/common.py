@@ -720,12 +720,12 @@ def is_git_checkout(path: Path) -> bool:
 
 def ensure_repo_checkout(repo_url: str) -> None:
     ensure_layout()
-    repo_dir = repo_dir()
-    if repo_dir.exists():
-        if not is_git_checkout(repo_dir):
-            raise SystemExit(f"{repo_dir} exists but is not a git checkout. Move it aside or remove it before deploying a branch.")
+    target = repo_dir()
+    if target.exists():
+        if not is_git_checkout(target):
+            raise SystemExit(f"{target} exists but is not a git checkout. Move it aside or remove it before deploying a branch.")
         return
-    run(["git", "clone", repo_url, str(repo_dir)])
+    run(["git", "clone", repo_url, str(target)])
 
 
 def repo_origin_url() -> str | None:
