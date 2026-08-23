@@ -81,6 +81,7 @@ def _isolated_registry():
     database_before = registry._DATABASE_PLUGIN
     settings_before = registry._SETTINGS_PLUGIN
     layout_before = registry._LAYOUT_HOOK
+    client_compose_files_before = registry._CLIENT_COMPOSE_FILES
 
     yield
 
@@ -92,6 +93,7 @@ def _isolated_registry():
     registry._DATABASE_PLUGIN = database_before
     registry._SETTINGS_PLUGIN = settings_before
     registry._LAYOUT_HOOK = layout_before
+    registry._CLIENT_COMPOSE_FILES = client_compose_files_before
 
 
 @pytest.fixture

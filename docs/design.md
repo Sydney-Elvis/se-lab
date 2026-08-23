@@ -100,18 +100,28 @@ No product-specific ports, service names, or compose fragments.
 
 ### Client App Orchestration (`./lab clients`)
 
-**Implemented today:** `clients status`, `clients update`, `clients rollback`, `clients pin`
-(`agent/commands/clients.py`).
+**Implemented today:** `clients status`, `clients update`, `clients rollback`, `clients pin`,
+`clients up`, `clients down`, `clients reset` (`agent/commands/clients.py`).
 
-**Designed, not yet implemented** — first-class support for bringing up external client services
-alongside the product under test:
 ```
-./lab clients up [--profile <name>]   # start selected clients
-./lab clients down                     # stop and remove
-./lab clients reset [--profile <name>] # wipe state, return to clean baseline
+./lab clients up [--profile CLIENT ...]   # bring up the product stack plus selected clients
+./lab clients down                        # stop/remove clients, leave the product stack running
+./lab clients reset [--profile CLIENT ...] # wipe client state, recreate clean
 ```
 
-**Profile-based selection:** A product lab defines named profiles (e.g. `cwa-sftp`, `abs`, `jellyfin`) mapping to sets of compose services. `./lab clients up --profile cwa-sftp` brings up only the relevant services.
+**Selection today rides Docker Compose's own `profiles:` field directly** — each `ClientPlugin`
+name doubles as its compose service's profile name, and `--profile` sets `COMPOSE_PROFILES` (the
+same env var `active_clients()` already reads). `up`/`reset` default to "every registered
+client"/"whatever's currently active" when `--profile` is omitted. A product lab registers the
+compose file(s) these commands layer on top of the base stack once, via
+`registry.set_client_compose_files([...])` — typically a network-topology override plus the
+client services themselves — the same optional-hook shape as `registry.set_layout_hook()`.
+
+**Not built**: named multi-service profiles (e.g. a single `cwa-sftp` profile bundling several
+compose services together, as opposed to one profile per client). The flat one-client-one-profile
+model above is deliberately the simpler thing that was actually needed first; family-librarian-lab
+may need the richer grouping once it registers its own `ClientPlugin`s (Phase 2b) — revisit then,
+not speculatively now.
 
 **Client verification interface:**
 

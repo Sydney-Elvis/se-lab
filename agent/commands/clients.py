@@ -36,6 +36,27 @@ def _detect_version_with_retry(plugin: ClientPlugin, *, retries: int = 8, delay:
     return None
 
 
+def _wait_ready(plugin: ClientPlugin, *, retries: int = 8, delay: float = 2.0) -> bool:
+    """Retry plugin.ready() while a just-started container warms up."""
+    for attempt in range(retries):
+        if plugin.ready():
+            return True
+        if attempt < retries - 1:
+            time.sleep(delay)
+    return False
+
+
+def _require_client_compose_files() -> tuple:
+    files = registry.client_compose_files()
+    if not files:
+        raise SystemExit(
+            "No client compose files registered. The product lab must call "
+            "registry.set_client_compose_files([...]) at import time before "
+            "'clients up/down/reset' can run."
+        )
+    return files
+
+
 def _current_image(plugin: ClientPlugin) -> str:
     return lab_common.get_runtime_env_value(plugin.image_env_var) or plugin.default_image
 
@@ -273,4 +294,108 @@ def handle_clients_pin(args: argparse.Namespace, config: Config) -> int:
     lab_common.push_client_version_record(args.client, after_record)
 
     print(f"\n{args.client} pinned to {image} ({after_version}).", flush=True)
+    return 0
+
+
+def _configure_up(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--profile",
+        nargs="+",
+        metavar="CLIENT",
+        default=None,
+        help="Client(s) to bring up (default: every registered client)",
+    )
+
+
+@registry.command(
+    "clients up",
+    help="Bring up the product stack plus the selected client app(s)",
+    configure=_configure_up,
+)
+def handle_clients_up(args: argparse.Namespace, config: Config) -> int:
+    known = sorted(registry.all_clients())
+    if not known:
+        raise SystemExit("No ClientPlugin registered for this product lab.")
+
+    targets = args.profile or known
+    for name in targets:
+        registry.get_client(name)  # validates
+
+    extra_files = _require_client_compose_files()
+    print(f"Bringing up stack with client profiles: {', '.join(targets)}", flush=True)
+    lab_common.set_runtime_env_values({"COMPOSE_PROFILES": ",".join(targets)})
+    lab_common.compose_up(extra_compose_files=extra_files)
+
+    print(flush=True)
+    for name in targets:
+        plugin = registry.get_client(name)()
+        if _wait_ready(plugin):
+            print(f"  {name}: ready", flush=True)
+        else:
+            print(f"  {name}: not ready yet — check 'lab clients status' or the container logs", flush=True)
+    return 0
+
+
+@registry.command("clients down", help="Stop and remove the client app(s), leaving the product stack running")
+def handle_clients_down(args: argparse.Namespace, config: Config) -> int:
+    extra_files = _require_client_compose_files()
+    active = lab_common.active_clients()
+    if not active:
+        print("No client apps active — nothing to stop.", flush=True)
+        return 0
+
+    print(f"Stopping client profiles: {', '.join(active)}", flush=True)
+    lab_common.set_runtime_env_values({"COMPOSE_PROFILES": ""})
+    lab_common.compose_up(extra_compose_files=extra_files)
+    print("Client apps stopped and removed; product stack still running.", flush=True)
+    return 0
+
+
+def _configure_reset(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--profile",
+        nargs="+",
+        metavar="CLIENT",
+        default=None,
+        help="Client(s) to reset (default: currently active)",
+    )
+    parser.add_argument("--yes", action="store_true", help="Skip confirmation prompt")
+
+
+@registry.command(
+    "clients reset",
+    help="Wipe client app state and bring the client(s) back up clean",
+    configure=_configure_reset,
+)
+def handle_clients_reset(args: argparse.Namespace, config: Config) -> int:
+    targets = args.profile or lab_common.active_clients()
+    if not targets:
+        raise SystemExit("No client apps active or specified to reset.")
+    for name in targets:
+        registry.get_client(name)  # validates
+
+    extra_files = _require_client_compose_files()
+
+    print("\nClients Reset Plan")
+    print(f"  Targets: {', '.join(targets)}")
+    print("  Action:  wipe scenario data, recreate containers clean")
+    print(flush=True)
+    confirm_action("Continue? [y/N] ", args)
+
+    for name in targets:
+        plugin = registry.get_client(name)()
+        print(f"[{name}] Wiping and reseeding scenario data ...", flush=True)
+        plugin.reset_scenario_data()
+
+    print(f"Recreating stack with client profiles: {', '.join(targets)}", flush=True)
+    lab_common.set_runtime_env_values({"COMPOSE_PROFILES": ",".join(targets)})
+    lab_common.compose_up(extra_compose_files=extra_files)
+
+    print(flush=True)
+    for name in targets:
+        plugin = registry.get_client(name)()
+        if _wait_ready(plugin):
+            print(f"  {name}: ready", flush=True)
+        else:
+            print(f"  {name}: not ready yet — check 'lab clients status' or the container logs", flush=True)
     return 0

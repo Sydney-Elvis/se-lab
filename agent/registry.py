@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Sequence
 
 if TYPE_CHECKING:
     from .clients.plugin import ClientPlugin
@@ -37,6 +38,7 @@ _ANALYSIS_PLUGIN: "AnalysisPlugin | None" = None
 _DATABASE_PLUGIN: "DatabasePlugin | None" = None
 _SETTINGS_PLUGIN: "SettingsPlugin | None" = None
 _LAYOUT_HOOK: Callable[[], None] | None = None
+_CLIENT_COMPOSE_FILES: tuple[Path, ...] = ()
 
 
 def command(
@@ -107,6 +109,22 @@ def get_client(name: str) -> type["ClientPlugin"]:
         raise SystemExit(
             f"No client named {name!r} is registered. Known clients: {', '.join(sorted(_CLIENTS)) or '(none)'}"
         ) from None
+
+
+def set_client_compose_files(files: Sequence[Path]) -> None:
+    """Extra compose file(s) `clients up/down/reset` layer on top of the base stack --
+    typically a network-topology override plus the client services themselves.
+
+    Optional, default empty, same shape as set_layout_hook(): se-lab has no way to
+    know a product's client-app compose topology, so a product lab registers it once
+    and these generic commands use it without knowing what's inside.
+    """
+    global _CLIENT_COMPOSE_FILES
+    _CLIENT_COMPOSE_FILES = tuple(files)
+
+
+def client_compose_files() -> tuple[Path, ...]:
+    return _CLIENT_COMPOSE_FILES
 
 
 def set_analysis_plugin(plugin: "AnalysisPlugin") -> None:

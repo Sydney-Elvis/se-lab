@@ -176,3 +176,15 @@ def test_layout_hook_runs_when_registered():
     registry.set_layout_hook(lambda: calls.append("ran"))
     registry.run_layout_hook()
     assert calls == ["ran"]
+
+
+def test_client_compose_files_default_empty():
+    assert registry.client_compose_files() == ()
+
+
+def test_client_compose_files_round_trips():
+    from pathlib import Path
+
+    files = [Path("/tmp/a.yaml"), Path("/tmp/b.yaml")]
+    registry.set_client_compose_files(files)
+    assert registry.client_compose_files() == tuple(files)
