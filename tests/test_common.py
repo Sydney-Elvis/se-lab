@@ -173,6 +173,60 @@ def test_deploy_functions_default_extra_compose_files_to_empty(monkeypatch):
     assert calls == [{"extra_compose_files": ()}]
 
 
+def test_git_repo_primitives_against_a_real_repo(tmp_path):
+    """The mocked deploy_*() tests above stub out every git-touching helper,
+    which is exactly why a self-shadowing `repo_dir = repo_dir()` bug in
+    print_repo_summary()/repo_origin_url()/git_prepare_branch()/
+    git_prepare_tag()/git_refresh_current_branch() went unnoticed until it
+    crashed for real on srv1 (see docs on why mocked compose/git tests aren't
+    a substitute for exercising the real thing). This drives those functions
+    against an actual local git repo instead."""
+    import shutil
+    import subprocess
+
+    origin = tmp_path / "origin.git"
+    work = tmp_path / "seed"
+    subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
+    subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(work), "config", "user.name", "Test"], check=True)
+    (work / "README.md").write_text("main\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(work), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(work), "commit", "-q", "-m", "main commit"], check=True)
+    subprocess.run(["git", "-C", str(work), "push", "-q", "origin", "HEAD:main"], check=True)
+    subprocess.run(["git", "-C", str(work), "tag", "v1.0.0"], check=True)
+    subprocess.run(["git", "-C", str(work), "push", "-q", "origin", "v1.0.0"], check=True)
+    subprocess.run(["git", "-C", str(work), "checkout", "-q", "-b", "feature"], check=True)
+    (work / "README.md").write_text("feature\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(work), "commit", "-q", "-am", "feature commit"], check=True)
+    subprocess.run(["git", "-C", str(work), "push", "-q", "origin", "HEAD:feature"], check=True)
+
+    target = lab_common.repo_dir()
+    shutil.rmtree(target, ignore_errors=True)
+    try:
+        origin_url = str(origin)
+        lab_common.ensure_repo_checkout(origin_url)
+        lab_common.print_repo_summary(origin_url)  # must not raise (regression: self-shadowed repo_dir)
+        assert lab_common.repo_origin_url() == origin_url
+
+        lab_common.git_prepare_branch("main")
+        assert lab_common.repo_current_branch() == "main"
+
+        lab_common.git_prepare_tag("v1.0.0")
+        assert lab_common.repo_current_branch() is None  # detached HEAD, not on a branch
+
+        lab_common.git_prepare_branch("feature")
+        assert lab_common.repo_current_branch() == "feature"
+        assert lab_common.git_refresh_current_branch() == "feature"
+
+        kind, ref = lab_common.resolve_build_target("v1.0.0", origin_url)
+        assert (kind, ref) == ("tag", "v1.0.0")
+        kind, ref = lab_common.resolve_build_target("main", origin_url)
+        assert (kind, ref) == ("branch", "main")
+    finally:
+        shutil.rmtree(target, ignore_errors=True)
+
+
 def test_client_version_history_roundtrip():
     assert lab_common.read_client_version_history() == {}
     lab_common.push_client_version_record("fakeclient", {"version": "1.0.0"})

@@ -729,21 +729,21 @@ def ensure_repo_checkout(repo_url: str) -> None:
 
 
 def repo_origin_url() -> str | None:
-    repo_dir = repo_dir()
-    if not is_git_checkout(repo_dir):
+    target = repo_dir()
+    if not is_git_checkout(target):
         return None
-    result = run_capture(["git", "remote", "get-url", "origin"], cwd=repo_dir, check=False)
+    result = run_capture(["git", "remote", "get-url", "origin"], cwd=target, check=False)
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
 
 
 def print_repo_summary(repo_url: str) -> None:
-    repo_dir = repo_dir()
+    target = repo_dir()
     if repo_origin_url():
-        print(f"Using existing checkout at {repo_dir}.", flush=True)
+        print(f"Using existing checkout at {target}.", flush=True)
     else:
-        print(f"Cloning repository into {repo_dir}.", flush=True)
+        print(f"Cloning repository into {target}.", flush=True)
 
 
 def git_branch(path: Path) -> str | None:
@@ -838,35 +838,35 @@ def resolve_build_target(target: str, repo_url: str | None = None) -> tuple[str,
 
 
 def git_prepare_branch(branch: str) -> None:
-    repo_dir = repo_dir()
-    run(["git", "fetch", "--prune", "origin"], cwd=repo_dir)
+    target = repo_dir()
+    run(["git", "fetch", "--prune", "origin"], cwd=target)
     git_assert_remote_branch(branch)
-    run(["git", "reset", "--hard"], cwd=repo_dir)
-    run(["git", "clean", "-ffdx"], cwd=repo_dir)
-    run(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=repo_dir)
-    run(["git", "reset", "--hard", f"origin/{branch}"], cwd=repo_dir)
+    run(["git", "reset", "--hard"], cwd=target)
+    run(["git", "clean", "-ffdx"], cwd=target)
+    run(["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=target)
+    run(["git", "reset", "--hard", f"origin/{branch}"], cwd=target)
 
 
 def git_prepare_tag(tag: str) -> None:
-    repo_dir = repo_dir()
-    run(["git", "fetch", "--prune", "--tags", "origin"], cwd=repo_dir)
+    target = repo_dir()
+    run(["git", "fetch", "--prune", "--tags", "origin"], cwd=target)
     if not git_ref_exists(f"refs/tags/{tag}"):
         raise SystemExit(f"Tag '{tag}' does not exist after fetching origin.\nCheck the tag name, or build a branch instead.")
-    run(["git", "reset", "--hard"], cwd=repo_dir)
-    run(["git", "clean", "-ffdx"], cwd=repo_dir)
+    run(["git", "reset", "--hard"], cwd=target)
+    run(["git", "clean", "-ffdx"], cwd=target)
     # Detached on purpose: a tag is not a branch, and creating a branch of the
     # same name would make every later `git checkout <name>` ambiguous.
-    run(["git", "checkout", "--detach", f"refs/tags/{tag}"], cwd=repo_dir)
+    run(["git", "checkout", "--detach", f"refs/tags/{tag}"], cwd=target)
 
 
 def git_refresh_current_branch() -> str:
     branch = repo_current_branch()
     if not branch:
         raise SystemExit("The cached checkout is not on a named branch. Use deploy-branch explicitly if you want to switch branches.")
-    repo_dir = repo_dir()
-    run(["git", "fetch", "--prune", "origin"], cwd=repo_dir)
+    target = repo_dir()
+    run(["git", "fetch", "--prune", "origin"], cwd=target)
     git_assert_remote_branch(branch)
-    run(["git", "reset", "--hard", f"origin/{branch}"], cwd=repo_dir)
+    run(["git", "reset", "--hard", f"origin/{branch}"], cwd=target)
     return branch
 
 
