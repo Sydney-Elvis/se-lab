@@ -358,6 +358,10 @@ echo "Creating .venv and installing dependencies..."
 run_cmd "python${PYTHON_VERSION}" -m venv "${LAB_DIR}/.venv"
 run_cmd "${LAB_DIR}/.venv/bin/pip" install --upgrade pip
 run_cmd "${LAB_DIR}/.venv/bin/pip" install -r "${LAB_DIR}/se-lab/requirements.txt"
+if [[ -f "${LAB_DIR}/requirements.txt" ]]; then
+  echo "Installing product-specific dependencies from ${LAB_DIR}/requirements.txt..."
+  run_cmd "${LAB_DIR}/.venv/bin/pip" install -r "${LAB_DIR}/requirements.txt"
+fi
 chown_if_needed "${OWNER}:${GROUP}" "${LAB_DIR}/.venv"
 
 echo "Preparing runtime compose layout..."
