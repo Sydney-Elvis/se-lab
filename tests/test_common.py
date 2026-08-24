@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from agent import common as lab_common, registry, runtime
@@ -382,5 +384,63 @@ def test_run_capture_clears_the_active_dashboard_before_handing_over_the_termina
     try:
         lab_common.run_capture(["echo", "hi"])
         assert calls == ["cleared"]
+    finally:
+        lab_common.set_active_dashboard(None)
+
+
+def test_run_suppresses_subprocess_output_when_a_dashboard_is_active(capsys):
+    class FakeDashboard:
+        def clear(self):
+            pass
+
+    lab_common.set_active_dashboard(FakeDashboard())
+    try:
+        # $((6*7)) so the produced output (42) never appears in the command
+        # argv itself -- only in what the subprocess actually prints.
+        lab_common.run(["sh", "-c", "echo $((6*7))"])
+        out = capsys.readouterr().out
+        assert "42" not in out
+    finally:
+        lab_common.set_active_dashboard(None)
+
+
+def test_run_still_inherits_the_terminal_when_no_dashboard_is_active(capfd):
+    # capfd (file-descriptor level), not capsys: subprocess.run() without
+    # capture_output hands the child the real fd directly, bypassing
+    # Python-level sys.stdout entirely -- capsys can't see it, which is
+    # itself confirmation this path truly inherits the terminal rather than
+    # going through Python's own stdout.
+    lab_common.set_active_dashboard(None)
+    lab_common.run(["sh", "-c", "echo $((6*7))"])
+    out = capfd.readouterr().out
+    assert "42" in out
+
+
+def test_run_surfaces_captured_output_on_failure_even_with_a_dashboard_active(capsys):
+    class FakeDashboard:
+        def clear(self):
+            pass
+
+    lab_common.set_active_dashboard(FakeDashboard())
+    try:
+        with pytest.raises(subprocess.CalledProcessError):
+            # $((6*7)) so the surfaced output (42) is unambiguously from the
+            # subprocess's own stdout, not the "+ command" trace line.
+            lab_common.run(["sh", "-c", "echo $((6*7)); exit 1"])
+        out = capsys.readouterr().out
+        assert "42" in out
+    finally:
+        lab_common.set_active_dashboard(None)
+
+
+def test_run_no_check_returns_failed_result_without_raising_when_dashboard_active():
+    class FakeDashboard:
+        def clear(self):
+            pass
+
+    lab_common.set_active_dashboard(FakeDashboard())
+    try:
+        result = lab_common.run(["sh", "-c", "exit 3"], check=False)
+        assert result.returncode == 3
     finally:
         lab_common.set_active_dashboard(None)

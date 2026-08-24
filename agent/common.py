@@ -179,6 +179,16 @@ def clear_active_dashboard() -> None:
         _ACTIVE_DASHBOARD.clear()
 
 
+def active_dashboard() -> Any | None:
+    """The registered dashboard (or None) -- for a product lab's own
+    subprocess call that bypasses run()/run_capture() (e.g. one that needs
+    its own project-name/profile plumbing) to decide whether to capture and
+    suppress its output instead of letting it inherit the terminal raw.
+    Mirrors run()'s own capture-when-a-dashboard-is-active behavior.
+    """
+    return _ACTIVE_DASHBOARD
+
+
 # ---------------------------------------------------------------------------
 # env files / settings
 # ---------------------------------------------------------------------------
@@ -533,8 +543,32 @@ def run(
         if check and return_code != 0:
             raise subprocess.CalledProcessError(return_code, command)
         return result
-    clear_active_dashboard()  # about to hand a subprocess the real terminal (no capture) -- it can't coordinate with us
+    clear_active_dashboard()
     print(f"+ {format_command(command)}", flush=True)
+    if _ACTIVE_DASHBOARD is not None:
+        # Capture instead of inheriting the terminal: letting a subprocess's
+        # own multi-line output (docker compose's progress spinner, in
+        # particular) print raw is what breaks "the dashboard stays pinned
+        # to the bottom" -- it just scrolls away with everything else, same
+        # as any other terminal output, clear_active_dashboard() above only
+        # stops it from corrupting the dashboard's own redraw math. The
+        # legacy lab's own dashboard avoids this differently but for the
+        # same reason: it never lets a suite subprocess's output touch the
+        # terminal directly while a dashboard owns the screen (captures it
+        # via Popen+PIPE, feeds a progress callback instead of printing
+        # raw). Simplified here to capture-and-suppress, surfaced only on
+        # failure so debugging isn't harder than before.
+        result = subprocess.run(
+            command, cwd=str(cwd) if cwd else None, env=env, check=False, text=True, capture_output=True
+        )
+        if result.returncode != 0:
+            if result.stdout:
+                sys.stdout.write(result.stdout)
+            if result.stderr:
+                sys.stderr.write(result.stderr)
+            if check:
+                raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout, stderr=result.stderr)
+        return result
     return subprocess.run(command, cwd=str(cwd) if cwd else None, env=env, check=check, text=True)
 
 
