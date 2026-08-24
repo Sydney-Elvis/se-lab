@@ -47,6 +47,12 @@ REPOS_DIR = runtime.REPO_ROOT / "repos"
 FIXTURES_DIR = runtime.REPO_ROOT / "fixtures"
 REPO_RESULTS_DIR = runtime.REPO_ROOT / "results"
 
+# se-lab's own checkout, independent of runtime.REPO_ROOT (the product lab's
+# root, set via configure()) -- this file's own location always tells you
+# where the se-lab package itself lives, matching runtime.py's own default
+# REPO_ROOT computation.
+SE_LAB_DIR = Path(__file__).resolve().parent.parent
+
 RESULTS_DIR_ENV = "LAB_RESULTS_DIR"
 ARTIFACTS_DIR_ENV = "LAB_ARTIFACTS_DIR"
 
@@ -774,6 +780,28 @@ def repo_current_branch() -> str | None:
 
 def repo_head_commit(short: bool = False) -> str | None:
     return git_commit(repo_dir(), short=short)
+
+
+def _repo_version_line(label: str, path: Path) -> str:
+    if not is_git_checkout(path):
+        return f"{label}: not a git checkout ({path})"
+    branch = git_branch(path) or "detached"
+    commit = git_commit(path, short=True) or "unknown"
+    return f"{label}: {branch} @ {commit}"
+
+
+def version_summary() -> str:
+    """One line per git checkout that makes up "the lab": the product lab
+    itself and se-lab, the framework nested inside it. Deliberately not
+    repo_dir() (repos/<product>) -- that's the product *application's* source
+    checkout, which is what `status` reports, not what version of the lab
+    tooling is running.
+    """
+    label = runtime.PRODUCT_NAME or "se-lab"
+    lines = [_repo_version_line(label, runtime.REPO_ROOT)]
+    if runtime.REPO_ROOT != SE_LAB_DIR:
+        lines.append(_repo_version_line("se-lab", SE_LAB_DIR))
+    return "\n".join(lines)
 
 
 def git_ref_exists(ref: str) -> bool:

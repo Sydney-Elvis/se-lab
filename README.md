@@ -79,6 +79,7 @@ cp se-lab/lab.env.example lab.env
 # <ENV_PREFIX>_* settings (repo URL, GHCR image, etc.)
 
 ./lab --help
+./lab --version   # git branch/commit of your product lab and the se-lab framework nested in it
 ```
 
 se-lab itself registers no `status` command — `status`/`run`/`build`/etc. are each product lab's

@@ -30,6 +30,16 @@ def test_build_parser_accepts_help_without_error():
     assert exc_info.value.code == 0
 
 
+def test_build_parser_accepts_version_without_error(capsys):
+    parser = cli.build_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["--version"])
+    assert exc_info.value.code == 0
+    out = capsys.readouterr().out
+    assert "selftest:" in out
+    assert "se-lab:" in out
+
+
 def test_build_parser_rejects_unknown_command():
     parser = cli.build_parser()
     with pytest.raises(SystemExit):

@@ -43,6 +43,17 @@ def test_repo_dir_and_image_naming_use_product_name():
     assert lab_common.sanitize_branch_name("feature/x y") == "feature-x-y"
 
 
+def test_version_summary_reports_product_lab_and_se_lab_separately():
+    # conftest's scratch REPO_ROOT is a plain tmp dir, not a git checkout;
+    # se-lab's own SE_LAB_DIR is this real checkout, so the two lines must
+    # differ -- proves version_summary() doesn't just report the same repo twice.
+    summary = lab_common.version_summary()
+    lines = summary.splitlines()
+    assert lines[0] == f"selftest: not a git checkout ({runtime.REPO_ROOT})"
+    assert lines[1].startswith("se-lab: ")
+    assert " @ " in lines[1]
+
+
 def test_ensure_layout_creates_directories_and_runs_the_hook():
     calls = []
     registry.set_layout_hook(lambda: calls.append("hook ran"))

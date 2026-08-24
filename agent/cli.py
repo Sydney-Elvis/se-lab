@@ -20,10 +20,29 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import commands, registry  # noqa: F401  (commands import registers se-lab's built-ins)
+from . import commands, common, registry  # noqa: F401  (commands import registers se-lab's built-ins)
 from .backend.ssh import SSHBackend
 from .context import build_context, is_local_server
 from .runtime import REPO_ROOT
+
+
+class _VersionAction(argparse.Action):
+    """Prints se-lab + product-lab git state and exits, same shape as --help.
+
+    A plain `action="version"` needs a fixed string at add_argument() time;
+    the real value here (git branch/commit) has to be read at call time, not
+    parser-build time -- build_parser() runs on every invocation, and running
+    git just to build a parser nobody may even use --version on would be
+    wasted work on every single command.
+    """
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS,
+                 help="show se-lab and product lab version info and exit"):
+        super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(common.version_summary())
+        parser.exit()
 
 
 def _strip_server_args(argv: list[str]) -> list[str]:
@@ -44,6 +63,7 @@ def _strip_server_args(argv: list[str]) -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="se-lab: integration test harness runner.")
+    parser.add_argument("--version", action=_VersionAction)
     parser.add_argument("--server", default=None, help="Run the command on a different host over SSH")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
