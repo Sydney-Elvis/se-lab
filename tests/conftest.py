@@ -82,6 +82,7 @@ def _isolated_registry():
     settings_before = registry._SETTINGS_PLUGIN
     layout_before = registry._LAYOUT_HOOK
     client_compose_files_before = registry._CLIENT_COMPOSE_FILES
+    required_host_ports_before = registry._REQUIRED_HOST_PORTS
 
     yield
 
@@ -94,6 +95,7 @@ def _isolated_registry():
     registry._SETTINGS_PLUGIN = settings_before
     registry._LAYOUT_HOOK = layout_before
     registry._CLIENT_COMPOSE_FILES = client_compose_files_before
+    registry._REQUIRED_HOST_PORTS = required_host_ports_before
 
 
 @pytest.fixture

@@ -39,6 +39,7 @@ _DATABASE_PLUGIN: "DatabasePlugin | None" = None
 _SETTINGS_PLUGIN: "SettingsPlugin | None" = None
 _LAYOUT_HOOK: Callable[[], None] | None = None
 _CLIENT_COMPOSE_FILES: tuple[Path, ...] = ()
+_REQUIRED_HOST_PORTS: tuple[int, ...] = ()
 
 
 def command(
@@ -125,6 +126,24 @@ def set_client_compose_files(files: Sequence[Path]) -> None:
 
 def client_compose_files() -> tuple[Path, ...]:
     return _CLIENT_COMPOSE_FILES
+
+
+def set_required_host_ports(ports: Sequence[int]) -> None:
+    """Host TCP port(s) this product's stack needs to bind directly (typically
+    host-network mode, where Docker can't detect a conflict itself -- the
+    container just fails to bind, with no clean error).
+
+    Optional, default empty, same shape as set_client_compose_files(): se-lab
+    has no way to know a product's port requirements, so a product lab
+    registers them once and common.compose_up() preflights against them
+    without knowing what they're for.
+    """
+    global _REQUIRED_HOST_PORTS
+    _REQUIRED_HOST_PORTS = tuple(ports)
+
+
+def required_host_ports() -> tuple[int, ...]:
+    return _REQUIRED_HOST_PORTS
 
 
 def set_analysis_plugin(plugin: "AnalysisPlugin") -> None:

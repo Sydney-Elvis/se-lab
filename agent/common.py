@@ -580,7 +580,94 @@ def backup_runtime_file(path: Path) -> Path:
     return backup_path
 
 
+def _port_occupied(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        # Compose can leave recently closed connections in TIME_WAIT; only a
+        # live listener should count as occupied, not ordinary teardown residue.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("0.0.0.0", port))
+        except OSError:
+            return True
+    return False
+
+
+def _conflicting_host_network_containers(exclude_project: str) -> list[str]:
+    """Names of running host-network containers from a DIFFERENT compose
+    project than the one about to be (re)deployed. Host-network containers
+    publish no `ports:`, so Docker itself can't report a bind conflict for
+    them -- this is the only way to find out who's actually holding a port.
+    A container from the SAME project isn't a real conflict: compose_up()'s
+    own down-then-up cycle is about to replace it anyway.
+    """
+    result = run_capture(["docker", "ps", "--format", "{{.Names}}"], check=False)
+    names = [line for line in result.stdout.splitlines() if line.strip()]
+    conflicting = []
+    for name in names:
+        inspect = run_capture(
+            [
+                "docker", "inspect", "--format",
+                '{{.HostConfig.NetworkMode}}\t{{index .Config.Labels "com.docker.compose.project"}}',
+                name,
+            ],
+            check=False,
+        )
+        mode, _, project = inspect.stdout.strip().partition("\t")
+        if mode == "host" and project and project != exclude_project:
+            conflicting.append(name)
+    return conflicting
+
+
+def ensure_required_host_ports_available(*, timeout_seconds: float = 10.0) -> None:
+    """Preflight compose_up()/compose_up_only() against registry.required_host_ports().
+
+    Ask before stopping anything, rather than either crashing mid-deploy with
+    a raw traceback (Docker can't detect a host-network port conflict itself
+    -- the container just fails to bind) or leaving a stale container from a
+    different lab/project silently answering health probes while this deploy
+    fails. Both have caused real confusion on shared hosts before.
+    """
+    ports = registry.required_host_ports()
+    if not ports:
+        return
+
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        occupied = [p for p in ports if _port_occupied(p)]
+        if not occupied:
+            return
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+    conflicting = _conflicting_host_network_containers(project_name())
+    if not conflicting:
+        # Either this project's own soon-to-be-recreated container, or
+        # something outside Docker/Compose entirely -- nothing safe to stop
+        # on this project's behalf; let the deploy proceed and surface
+        # whatever Docker itself reports.
+        return
+
+    formatted_ports = ", ".join(str(p) for p in occupied)
+    names = ", ".join(conflicting)
+    if not sys.stdin.isatty():
+        raise SystemExit(
+            f"Required host TCP port(s) {formatted_ports} are already in use by host-networked "
+            f"container(s) {names} from a different lab/project, and this session is "
+            "non-interactive. Stop them manually (`docker stop <name>`), then rerun."
+        )
+    response = input(
+        f"Port(s) {formatted_ports} are already in use by host-networked container(s) {names} "
+        "from a different lab/project. Stop them and continue? [y/N] "
+    ).strip().lower()
+    if response not in {"y", "yes"}:
+        raise SystemExit("Aborted: required ports are still in use by another lab/project.")
+    for name in conflicting:
+        run(["docker", "stop", name])
+
+
 def compose_up(*, extra_compose_files: Sequence[Path] = ()) -> None:
+    ensure_required_host_ports_available()
     run(compose_command("down", "--remove-orphans", extra_compose_files=extra_compose_files), check=False)
     run(compose_command("up", "-d", "--remove-orphans", extra_compose_files=extra_compose_files))
 
@@ -588,6 +675,7 @@ def compose_up(*, extra_compose_files: Sequence[Path] = ()) -> None:
 def compose_up_only(service: str, *, extra_compose_files: Sequence[Path] = ()) -> None:
     """Start just one compose service, e.g. after a fresh DB/state wipe left
     dependent clients unable to pass their health checks yet."""
+    ensure_required_host_ports_available()
     run(compose_command("down", "--remove-orphans", extra_compose_files=extra_compose_files), check=False)
     run(compose_command("up", "-d", service, extra_compose_files=extra_compose_files))
 

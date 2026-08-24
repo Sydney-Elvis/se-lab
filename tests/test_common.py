@@ -261,3 +261,76 @@ def test_active_clients_reads_compose_profiles():
     registry.register_client(FakeClient)
     lab_common.set_runtime_env_values({"COMPOSE_PROFILES": "fc,notregistered"})
     assert lab_common.active_clients() == ["fc"]
+
+
+def test_port_occupied_detects_a_real_bound_listener():
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        # 0.0.0.0, matching what a host-network container binds and what
+        # _port_occupied() itself probes -- a listener on just 127.0.0.1
+        # doesn't reliably conflict with a 0.0.0.0 probe on every OS.
+        listener.bind(("0.0.0.0", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        assert lab_common._port_occupied(port) is True
+    # Freed once the listening socket above is closed (SO_REUSEADDR means an
+    # immediate rebind attempt shouldn't be confused by TIME_WAIT either).
+    assert lab_common._port_occupied(port) is False
+
+
+def test_ensure_required_host_ports_available_noop_when_none_registered(monkeypatch):
+    called = []
+    monkeypatch.setattr(lab_common, "_port_occupied", lambda port: called.append(port) or True)
+    lab_common.ensure_required_host_ports_available()
+    assert called == []  # never even checked -- nothing registered to check
+
+
+def test_ensure_required_host_ports_available_returns_when_ports_free(monkeypatch):
+    registry.set_required_host_ports((5004, 8080))
+    monkeypatch.setattr(lab_common, "_port_occupied", lambda port: False)
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("should not need to look for a conflicting container")
+
+    monkeypatch.setattr(lab_common, "_conflicting_host_network_containers", _fail)
+    lab_common.ensure_required_host_ports_available(timeout_seconds=0)
+
+
+def test_ensure_required_host_ports_available_returns_when_only_same_project_container_holds_it(monkeypatch):
+    registry.set_required_host_ports((8080,))
+    monkeypatch.setattr(lab_common, "_port_occupied", lambda port: True)
+    monkeypatch.setattr(lab_common, "_conflicting_host_network_containers", lambda exclude_project: [])
+    # No exception, no prompt -- compose_up()'s own down-then-up handles this case.
+    lab_common.ensure_required_host_ports_available(timeout_seconds=0)
+
+
+def test_ensure_required_host_ports_available_raises_clearly_when_non_interactive(monkeypatch):
+    registry.set_required_host_ports((8080,))
+    monkeypatch.setattr(lab_common, "_port_occupied", lambda port: True)
+    monkeypatch.setattr(lab_common, "_conflicting_host_network_containers", lambda exclude_project: ["legacy-m3undle"])
+    monkeypatch.setattr(lab_common.sys.stdin, "isatty", lambda: False)
+    with pytest.raises(SystemExit, match="legacy-m3undle"):
+        lab_common.ensure_required_host_ports_available(timeout_seconds=0)
+
+
+def test_ensure_required_host_ports_available_stops_containers_when_confirmed(monkeypatch):
+    registry.set_required_host_ports((8080,))
+    monkeypatch.setattr(lab_common, "_port_occupied", lambda port: True)
+    monkeypatch.setattr(lab_common, "_conflicting_host_network_containers", lambda exclude_project: ["legacy-m3undle"])
+    monkeypatch.setattr(lab_common.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    stopped = []
+    monkeypatch.setattr(lab_common, "run", lambda cmd, **kwargs: stopped.append(cmd))
+    lab_common.ensure_required_host_ports_available(timeout_seconds=0)
+    assert stopped == [["docker", "stop", "legacy-m3undle"]]
+
+
+def test_ensure_required_host_ports_available_aborts_when_declined(monkeypatch):
+    registry.set_required_host_ports((8080,))
+    monkeypatch.setattr(lab_common, "_port_occupied", lambda port: True)
+    monkeypatch.setattr(lab_common, "_conflicting_host_network_containers", lambda exclude_project: ["legacy-m3undle"])
+    monkeypatch.setattr(lab_common.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    with pytest.raises(SystemExit, match="Aborted"):
+        lab_common.ensure_required_host_ports_available(timeout_seconds=0)
