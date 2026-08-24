@@ -37,7 +37,11 @@ def test_supported_false_on_dumb_term_even_when_forced(monkeypatch):
     assert LiveDashboard.supported() is False
 
 
-def test_render_and_clear_do_not_raise(capsys):
+def test_render_and_clear_do_not_raise(capfd):
+    # capfd, not capsys: LiveDashboard writes via sys.__stdout__ deliberately
+    # (see the class docstring/comments) so it stays visible even when
+    # run_suite() redirects sys.stdout to capture a suite's own prints.
+    # capsys only tracks sys.stdout-level writes; capfd tracks the real fd.
     dashboard = LiveDashboard("Test Lab", 3)
     dashboard.start_suite("suite-a", 1, test_total=5)
     dashboard.render()
@@ -45,7 +49,7 @@ def test_render_and_clear_do_not_raise(capsys):
     dashboard.render()
     dashboard.record_result(name="CASE-02", status="fail", completed=2, failed=True)
     dashboard.render()
-    out = capsys.readouterr().out
+    out = capfd.readouterr().out
     assert "Test Lab" in out
     assert "CASE-02" in out
     assert dashboard.any_failed is True

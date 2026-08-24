@@ -74,7 +74,10 @@ def test_no_progress_file_set_means_no_file_written(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_record_updates_and_clears_dashboard_without_raising(capsys):
+def test_record_updates_and_clears_dashboard_without_raising(capfd):
+    # capfd, not capsys: RunContext._record() writes via sys.__stdout__
+    # deliberately, so it stays visible even under run_suite()'s own
+    # redirect. capsys only tracks sys.stdout-level writes.
     dashboard = LiveDashboard("Test Lab", 1)
     dashboard.start_suite("demo-suite", 1, test_total=2)
     ctx = RunContext("demo-suite", emit_progress=False, dashboard=dashboard)
@@ -85,7 +88,7 @@ def test_record_updates_and_clears_dashboard_without_raising(capsys):
     ctx.fail("t2", "broke")
     assert dashboard.test_count == 2
     assert dashboard.any_failed is True
-    out = capsys.readouterr().out
+    out = capfd.readouterr().out
     assert "[PASS] t1: worked" in out
     assert "[FAIL] t2: broke" in out
 

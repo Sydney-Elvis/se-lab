@@ -42,8 +42,10 @@ every test_*.py in it and collects each file's module-level SUITE.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import inspect
+import io
 import itertools
 import sys
 from dataclasses import dataclass, field
@@ -128,6 +130,18 @@ def _call_with_matching_kwargs(func: Callable[..., Any], *positional: Any, conte
     return func(*positional, **kwargs)
 
 
+@contextlib.contextmanager
+def _capture(buffer: io.StringIO | None):
+    """No-op when buffer is None (no dashboard active -- prints go straight
+    to the terminal as always). Otherwise redirects stdout/stderr into
+    buffer for the duration of the `with` block."""
+    if buffer is None:
+        yield
+        return
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+        yield
+
+
 def run_suite(target: Suite, ctx: RunContext, **base_context: Any) -> SuiteRunResult:
     """Run every case registered on `target`, isolating each from the others.
 
@@ -136,33 +150,69 @@ def run_suite(target: Suite, ctx: RunContext, **base_context: Any) -> SuiteRunRe
     every case that would have run after it, which is what an unhandled
     exception inside the old manual "main() calls each test by name in a
     row" pattern did.
+
+    While a dashboard is active, setup/case/teardown calls are run with
+    stdout/stderr captured, not printed live -- a suite's own debug prints
+    (a scenario name, a simulator's startup log, a per-client status line;
+    all real examples that scrolled the dashboard away, confirmed against a
+    live run) have no way to coordinate with the dashboard the way
+    RunContext's own pass/fail line and common.run()'s subprocess calls do.
+    Captured output is discarded on success and flushed to the real
+    terminal on failure, so debugging isn't harder than before -- same
+    principle already applied to subprocess output in common.run().
     """
     context = dict(base_context)
     setup_ok = True
     setup_error: str | None = None
+    dashboard = ctx.dashboard
+
+    def _flush(buffer: io.StringIO) -> None:
+        content = buffer.getvalue()
+        if not content:
+            return
+        if dashboard is not None:
+            dashboard.clear()
+        sys.__stdout__.write(content)
+        sys.__stdout__.flush()
 
     if target.setup_fn is not None:
+        buffer = io.StringIO() if dashboard is not None else None
         try:
-            extra = _call_with_matching_kwargs(target.setup_fn, context=context)
+            with _capture(buffer):
+                extra = _call_with_matching_kwargs(target.setup_fn, context=context)
             if extra:
                 context.update(extra)
         except Exception as exc:  # noqa: BLE001 - setup failing must not crash the run
             setup_ok = False
             setup_error = str(exc)
+            if buffer is not None:
+                _flush(buffer)
             ctx.fail(f"{target.name}-SETUP", f"Suite setup failed: {exc}")
 
     if setup_ok:
         for case in target.cases:
+            buffer = io.StringIO() if dashboard is not None else None
+            before = len(ctx.results)
             try:
-                _call_with_matching_kwargs(case.func, ctx, context=context)
+                with _capture(buffer):
+                    _call_with_matching_kwargs(case.func, ctx, context=context)
             except Exception as exc:  # noqa: BLE001 - one case's bug must not cost the rest
+                if buffer is not None:
+                    _flush(buffer)
                 ctx.fail(case.test_id, f"Unhandled exception in {case.test_id}: {exc}")
+            else:
+                if buffer is not None and any(r.status == "fail" for r in ctx.results[before:]):
+                    _flush(buffer)
 
         if target.teardown_fn is not None:
+            buffer = io.StringIO() if dashboard is not None else None
             try:
-                _call_with_matching_kwargs(target.teardown_fn, context=context)
+                with _capture(buffer):
+                    _call_with_matching_kwargs(target.teardown_fn, context=context)
             except Exception as exc:  # noqa: BLE001 - teardown failing must not mask results
-                print(f"Warning: {target.name} teardown raised: {exc}", flush=True)
+                if buffer is not None:
+                    _flush(buffer)
+                print(f"Warning: {target.name} teardown raised: {exc}", flush=True, file=sys.__stdout__)
 
     return SuiteRunResult(
         suite_name=target.name,

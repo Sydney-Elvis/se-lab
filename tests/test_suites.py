@@ -67,6 +67,121 @@ def test_run_suite_calls_every_case_and_matches_expected_to_actual():
     assert ctx.passed_count == 2
 
 
+class _FakeDashboard:
+    def __init__(self):
+        self.clear_calls = 0
+
+    def clear(self):
+        self.clear_calls += 1
+
+    def record_result(self, **kwargs):
+        pass
+
+    def render(self):
+        pass
+
+
+def test_run_suite_suppresses_case_prints_on_success_when_dashboard_active(capfd):
+    # capfd, not capsys: RunContext._record() and LiveDashboard both write
+    # via sys.__stdout__ (deliberately, to bypass run_suite()'s own
+    # redirect) -- capsys only tracks sys.stdout-level writes and won't see
+    # them, capfd tracks the real fd underneath.
+    s = suite("demo")
+
+    @s.case("DEMO-01")
+    def c1(ctx):
+        print("noisy debug line")
+        ctx.ok("DEMO-01", "fine")
+
+    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    run_suite(s, ctx)
+    out = capfd.readouterr().out
+    assert "noisy debug line" not in out
+    assert "[PASS] DEMO-01: fine" in out
+
+
+def test_run_suite_flushes_case_prints_on_explicit_failure_when_dashboard_active(capfd):
+    s = suite("demo")
+
+    @s.case("DEMO-01")
+    def c1(ctx):
+        print("useful failure context")
+        ctx.fail("DEMO-01", "broke")
+
+    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    run_suite(s, ctx)
+    out = capfd.readouterr().out
+    assert "useful failure context" in out
+    assert "[FAIL] DEMO-01: broke" in out
+
+
+def test_run_suite_flushes_case_prints_on_unhandled_exception_when_dashboard_active(capfd):
+    s = suite("demo")
+
+    @s.case("DEMO-01")
+    def c1(ctx):
+        print("about to blow up")
+        raise RuntimeError("boom")
+
+    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    run_suite(s, ctx)
+    out = capfd.readouterr().out
+    assert "about to blow up" in out
+    assert "Unhandled exception in DEMO-01" in out
+
+
+def test_run_suite_suppresses_setup_prints_on_success_when_dashboard_active(capfd):
+    s = suite("demo")
+
+    @s.setup
+    def _setup():
+        print("setup noise")
+        return {"x": 1}
+
+    @s.case("DEMO-01")
+    def c1(ctx, x):
+        ctx.ok("DEMO-01", f"x={x}")
+
+    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    run_suite(s, ctx)
+    out = capfd.readouterr().out
+    assert "setup noise" not in out
+    assert "[PASS] DEMO-01: x=1" in out
+
+
+def test_run_suite_flushes_setup_prints_on_setup_failure_when_dashboard_active(capfd):
+    s = suite("demo")
+
+    @s.setup
+    def _setup():
+        print("setup context before failure")
+        raise RuntimeError("setup broke")
+
+    @s.case("DEMO-01")
+    def c1(ctx):
+        ctx.ok("DEMO-01", "unreachable")
+
+    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    run_suite(s, ctx)
+    out = capfd.readouterr().out
+    assert "setup context before failure" in out
+    assert "Suite setup failed" in out
+
+
+def test_run_suite_does_not_capture_prints_when_no_dashboard(capfd):
+    s = suite("demo")
+
+    @s.case("DEMO-01")
+    def c1(ctx):
+        print("visible by default")
+        ctx.ok("DEMO-01", "fine")
+
+    ctx = RunContext("demo", emit_progress=False, dashboard=None)
+    run_suite(s, ctx)
+    out = capfd.readouterr().out
+    assert "visible by default" in out
+
+
 def test_case_that_raises_is_isolated_and_recorded_as_failure():
     s = suite("demo")
     calls = []
@@ -161,7 +276,11 @@ def test_setup_return_value_is_merged_and_matched_by_parameter_name():
     assert ctx.results[1].message == "http://example/api 7"
 
 
-def test_teardown_always_runs_and_its_failure_does_not_mask_results(capsys):
+def test_teardown_always_runs_and_its_failure_does_not_mask_results(capfd):
+    # capfd, not capsys: the teardown-failure warning writes via
+    # sys.__stdout__ unconditionally (same reasoning as RunContext._record()
+    # and LiveDashboard -- must stay visible regardless of any active
+    # redirect), so capsys won't see it.
     s = suite("demo")
 
     @s.case("DEMO-01")
@@ -176,7 +295,7 @@ def test_teardown_always_runs_and_its_failure_does_not_mask_results(capsys):
     result = run_suite(s, ctx)
     assert result.actual == 1
     assert ctx.passed_count == 1
-    assert "cleanup failed" in capsys.readouterr().out
+    assert "cleanup failed" in capfd.readouterr().out
 
 
 def _write_suite_file(directory, filename, suite_name, case_count=2):
@@ -309,7 +428,10 @@ def test_run_suites_writes_one_result_json_per_suite_and_reports_no_failure(tmp_
     assert (tmp_path / "results-also-passing.json").exists()
 
 
-def test_run_suites_with_live_progress_forced_on_still_produces_correct_results(tmp_path, capsys):
+def test_run_suites_with_live_progress_forced_on_still_produces_correct_results(tmp_path, capfd):
+    # capfd, not capsys: dashboard/result output goes via sys.__stdout__
+    # deliberately (see agent/dashboard.py, agent/results.py), which capsys
+    # can't see.
     passing = suite("passing")
 
     @passing.case("P-01")
@@ -326,7 +448,7 @@ def test_run_suites_with_live_progress_forced_on_still_produces_correct_results(
 
     assert summary.failed is True
     assert [r.suite_name for r in summary.results] == ["passing", "broken"]
-    out = capsys.readouterr().out
+    out = capfd.readouterr().out
     assert "Test Lab" in out
     assert "[PASS] P-01: fine" in out
     assert "[FAIL] B-01: nope" in out

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,7 +58,12 @@ class RunContext:
         label = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
         if self.dashboard is not None:
             self.dashboard.clear()  # own the terminal for this one print, same as any other plain output
-        print(f"  [{label}] {result.name}: {result.message}", flush=True)
+        # sys.__stdout__, not print()/sys.stdout: run_suite() redirects
+        # sys.stdout to a capture buffer for the duration of a case's own
+        # execution (so a suite's own debug prints don't scroll the
+        # dashboard away), but the case's actual pass/fail result must
+        # always be visible live, redirect or not.
+        print(f"  [{label}] {result.name}: {result.message}", flush=True, file=sys.__stdout__)
         if self.dashboard is not None:
             self.dashboard.record_result(
                 name=result.name, status=result.status, completed=len(self.results), failed=result.failed

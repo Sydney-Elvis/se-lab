@@ -72,8 +72,8 @@ class LiveDashboard:
     @staticmethod
     def _fit(value: str) -> str:
         try:
-            columns = os.get_terminal_size(sys.stdout.fileno()).columns
-        except (OSError, ValueError):
+            columns = os.get_terminal_size(sys.__stdout__.fileno()).columns
+        except (OSError, ValueError, AttributeError):
             columns = 100
         return value[: max(20, columns - 12)]
 
@@ -135,22 +135,29 @@ class LiveDashboard:
                 status=self.latest_status if self.latest_name != "none yet" else None,
             ),
         ]
+        # sys.__stdout__, not sys.stdout: run_suite() redirects sys.stdout to
+        # a capture buffer for the duration of a suite's setup/case/teardown
+        # calls (see agent/suites.py), so a suite's own prints don't scroll
+        # the dashboard away -- but the dashboard itself must keep writing to
+        # the real terminal regardless, or it would capture and hide itself.
+        stream = sys.__stdout__
         if self.rendered:
-            sys.stdout.write(f"\x1b[{self.LINE_COUNT}A")
+            stream.write(f"\x1b[{self.LINE_COUNT}A")
         else:
-            sys.stdout.write("\x1b[?25l")
+            stream.write("\x1b[?25l")
         for line in lines:
-            sys.stdout.write("\x1b[2K" + line + "\n")
-        sys.stdout.flush()
+            stream.write("\x1b[2K" + line + "\n")
+        stream.flush()
         self.rendered = True
 
     def clear(self) -> None:
         if not self.rendered:
             return
-        sys.stdout.write(f"\x1b[{self.LINE_COUNT}A")
+        stream = sys.__stdout__
+        stream.write(f"\x1b[{self.LINE_COUNT}A")
         for _ in range(self.LINE_COUNT):
-            sys.stdout.write("\x1b[2K\n")
-        sys.stdout.write(f"\x1b[{self.LINE_COUNT}A")
-        sys.stdout.write("\x1b[?25h")
-        sys.stdout.flush()
+            stream.write("\x1b[2K\n")
+        stream.write(f"\x1b[{self.LINE_COUNT}A")
+        stream.write("\x1b[?25h")
+        stream.flush()
         self.rendered = False
