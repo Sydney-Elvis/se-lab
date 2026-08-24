@@ -6,6 +6,7 @@ import textwrap
 
 import pytest
 
+from agent import common as lab_common
 from agent.results import RunContext
 from agent.suites import Suite, discover_suites, run_suite, run_suites, suite, suites_in_group
 
@@ -286,6 +287,35 @@ def test_run_suites_with_live_progress_forced_on_still_produces_correct_results(
     assert "Test Lab" in out
     assert "[PASS] P-01: fine" in out
     assert "[FAIL] B-01: nope" in out
+
+
+def test_run_suites_registers_and_clears_the_active_dashboard_with_live_progress(tmp_path):
+    passing = suite("passing")
+
+    @passing.case("P-01")
+    def p1(ctx):
+        # While this case runs, common.run()'s subprocess path must see the
+        # dashboard registered -- confirms run_suites() wires it up before
+        # any case executes, not just around the loop's own prints.
+        assert lab_common._ACTIVE_DASHBOARD is not None
+
+    run_suites([passing], results_dir=tmp_path, label="Test Lab", live_progress=True)
+    assert lab_common._ACTIVE_DASHBOARD is None
+
+
+def test_run_suites_clears_the_active_dashboard_even_when_something_unexpected_raises(tmp_path, monkeypatch):
+    # run_suite() itself never raises (case/setup failures are caught and
+    # recorded) -- this simulates the unexpected case the try/finally guards
+    # against, e.g. a bug elsewhere in the loop body.
+    import agent.suites as suites_module
+
+    def _boom(target, ctx, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(suites_module, "run_suite", _boom)
+    with pytest.raises(RuntimeError, match="boom"):
+        run_suites([suite("s")], results_dir=tmp_path, label="Test Lab", live_progress=True)
+    assert lab_common._ACTIVE_DASHBOARD is None
 
 
 def test_run_suites_reports_failed_when_any_case_fails(tmp_path):

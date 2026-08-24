@@ -334,3 +334,53 @@ def test_ensure_required_host_ports_available_aborts_when_declined(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     with pytest.raises(SystemExit, match="Aborted"):
         lab_common.ensure_required_host_ports_available(timeout_seconds=0)
+
+
+def test_clear_active_dashboard_is_a_noop_when_none_registered():
+    lab_common.set_active_dashboard(None)
+    lab_common.clear_active_dashboard()  # must not raise
+
+
+def test_clear_active_dashboard_calls_clear_on_the_registered_object():
+    calls = []
+
+    class FakeDashboard:
+        def clear(self):
+            calls.append("cleared")
+
+    lab_common.set_active_dashboard(FakeDashboard())
+    try:
+        lab_common.clear_active_dashboard()
+        assert calls == ["cleared"]
+    finally:
+        lab_common.set_active_dashboard(None)
+
+
+def test_run_clears_the_active_dashboard_before_handing_over_the_terminal(monkeypatch):
+    calls = []
+
+    class FakeDashboard:
+        def clear(self):
+            calls.append("cleared")
+
+    lab_common.set_active_dashboard(FakeDashboard())
+    try:
+        lab_common.run(["true"])
+        assert calls == ["cleared"]
+    finally:
+        lab_common.set_active_dashboard(None)
+
+
+def test_run_capture_clears_the_active_dashboard_before_handing_over_the_terminal():
+    calls = []
+
+    class FakeDashboard:
+        def clear(self):
+            calls.append("cleared")
+
+    lab_common.set_active_dashboard(FakeDashboard())
+    try:
+        lab_common.run_capture(["echo", "hi"])
+        assert calls == ["cleared"]
+    finally:
+        lab_common.set_active_dashboard(None)

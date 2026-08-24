@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from . import common
 from .dashboard import LiveDashboard
 from .results import RunContext
 
@@ -201,31 +202,43 @@ def run_suites(
     dashboard = None
     if live_progress if live_progress is not None else LiveDashboard.supported():
         dashboard = LiveDashboard(label, len(suites))
+        # So common.run()/run_capture() -- and anything else that shells out
+        # during a case (a scenario's own compose up/down, a mid-suite
+        # restart_stack_with_env()) -- can clear the dashboard before handing
+        # a subprocess the real terminal. Without this, that subprocess's own
+        # output (docker compose's animated progress, in particular) prints
+        # underneath the dashboard's last render with no coordination, and
+        # the dashboard's next clear() then erases the wrong lines, having
+        # lost track of how many lines have gone by since it last drew.
+        common.set_active_dashboard(dashboard)
 
     results: list[SuiteRunResult] = []
     failed = False
-    for index, target in enumerate(suites, start=1):
+    try:
+        for index, target in enumerate(suites, start=1):
+            if dashboard is not None:
+                dashboard.start_suite(target.name, index, test_total=len(target.cases))
+                dashboard.render()
+            else:
+                print(f"\n--- Running suite: {target.name} ---", flush=True)
+            context = RunContext(target.name, dashboard=dashboard)
+            result = run_suite(target, context, **base_context)
+            context.print_summary()
+            context.write_json(results_dir / f"results-{target.name}.json")
+            if not result.setup_ok:
+                print(f"  Setup failed: {result.setup_error}", flush=True)
+            if result.drifted:
+                print(
+                    f"  Result drift: expected {result.expected} registered cases, recorded {result.actual} outcomes.",
+                    flush=True,
+                )
+            if context.failed_count or result.drifted or not result.setup_ok:
+                failed = True
+            results.append(result)
+    finally:
         if dashboard is not None:
-            dashboard.start_suite(target.name, index, test_total=len(target.cases))
-            dashboard.render()
-        else:
-            print(f"\n--- Running suite: {target.name} ---", flush=True)
-        context = RunContext(target.name, dashboard=dashboard)
-        result = run_suite(target, context, **base_context)
-        context.print_summary()
-        context.write_json(results_dir / f"results-{target.name}.json")
-        if not result.setup_ok:
-            print(f"  Setup failed: {result.setup_error}", flush=True)
-        if result.drifted:
-            print(
-                f"  Result drift: expected {result.expected} registered cases, recorded {result.actual} outcomes.",
-                flush=True,
-            )
-        if context.failed_count or result.drifted or not result.setup_ok:
-            failed = True
-        results.append(result)
-    if dashboard is not None:
-        dashboard.clear()
+            dashboard.clear()
+            common.set_active_dashboard(None)
     return SuitesRunSummary(results=results, failed=failed)
 
 

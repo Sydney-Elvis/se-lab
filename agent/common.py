@@ -37,7 +37,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 from . import registry, runtime
 
@@ -137,6 +137,7 @@ def format_duration(seconds: float | int | None) -> str:
 
 _COMMAND_PROGRESS_CALLBACK: Callable[[Sequence[str], str], None] | None = None
 _COMMAND_PROGRESS_LOG: Path | None = None
+_ACTIVE_DASHBOARD: Any | None = None  # duck-typed: anything with a no-arg .clear()
 
 
 def set_command_progress(
@@ -150,6 +151,32 @@ def set_command_progress(
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text("", encoding="utf-8")
+
+
+def set_active_dashboard(dashboard: Any | None) -> None:
+    """Register the currently-running LiveDashboard (or None), so run()/
+    run_capture() -- and any other code about to print or hand a subprocess
+    the real terminal -- can clear it first.
+
+    Duck-typed (just needs .clear()), not agent.dashboard.LiveDashboard
+    directly: dashboard.py already imports from this module for
+    format_duration(), so importing LiveDashboard back here would cycle.
+    """
+    global _ACTIVE_DASHBOARD
+    _ACTIVE_DASHBOARD = dashboard
+
+
+def clear_active_dashboard() -> None:
+    """Clear the registered dashboard (if any) right before anything prints
+    or a subprocess inherits the terminal directly -- a docker/git/compose
+    call's own output has no way to coordinate with the dashboard's in-place
+    redraw otherwise, and WILL corrupt it (confirmed: the dashboard assumes
+    its own last render is still the last thing on screen; anything else
+    printed in between makes its next clear()'s cursor-up land in the wrong
+    place). Safe to call even when no dashboard is active -- a no-op then.
+    """
+    if _ACTIVE_DASHBOARD is not None:
+        _ACTIVE_DASHBOARD.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +533,7 @@ def run(
         if check and return_code != 0:
             raise subprocess.CalledProcessError(return_code, command)
         return result
+    clear_active_dashboard()  # about to hand a subprocess the real terminal (no capture) -- it can't coordinate with us
     print(f"+ {format_command(command)}", flush=True)
     return subprocess.run(command, cwd=str(cwd) if cwd else None, env=env, check=check, text=True)
 
@@ -517,6 +545,7 @@ def run_capture(
     env: dict[str, str] | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    clear_active_dashboard()
     print(f"+ {format_command(command)}", flush=True)
     return subprocess.run(command, cwd=str(cwd) if cwd else None, env=env, check=check, text=True, capture_output=True)
 
