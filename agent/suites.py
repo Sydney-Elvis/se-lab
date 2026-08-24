@@ -282,3 +282,55 @@ def suites_in_group(suites: list[Suite], group: str) -> list[Suite]:
     if group == "all":
         return list(suites)
     return [s for s in suites if s.group == group]
+
+
+def select_suites(
+    suites: list[Suite], *, only: str | None = None, group: str | None = None, case: str | None = None
+) -> list[Suite]:
+    """Filter suites for a `run` command: by suite name (`only`), or by
+    group (default "all"), then optionally narrow further to one case id
+    within whatever suites remain.
+
+    Extracted 2026-08-24 from what m3undle_lab and family_librarian_lab each
+    hand-rolled independently as their own `_select_suites()` -- the same
+    underlying feature (m3undle's `--only`/`--test-group` selected by suite/
+    group; family-librarian's `--group`/`--case` selected by group/case) had
+    drifted into different flag names and, for `--case`, existed on only one
+    product lab. One shared implementation means a selector means the same
+    thing on every product lab, and a product lab can't drift from another
+    by editing its own copy.
+
+    `only` and `group` are mutually exclusive at the CLI level (a product
+    lab's own argparse should enforce that, e.g. via
+    add_mutually_exclusive_group()) -- this function doesn't re-check it,
+    since by the time it's called only one should ever be set.
+    """
+    if only:
+        selected = [s for s in suites if s.name == only]
+        if not selected:
+            available = ", ".join(s.name for s in suites) or "(none)"
+            raise SystemExit(f"Unknown suite {only!r}. Available: {available}")
+    else:
+        target_group = group or "all"
+        selected = suites_in_group(suites, target_group)
+        if not selected:
+            available = ", ".join(sorted({s.group for s in suites})) or "(none)"
+            raise SystemExit(f"Unknown or empty suite group {target_group!r}. Available groups: all, {available}")
+
+    if not case:
+        return selected
+    narrowed: list[Suite] = []
+    for candidate in selected:
+        matching = [c for c in candidate.cases if c.test_id == case]
+        if matching:
+            narrowed.append(
+                Suite(
+                    name=candidate.name,
+                    group=candidate.group,
+                    order=candidate.order,
+                    cases=matching,
+                    setup_fn=candidate.setup_fn,
+                    teardown_fn=candidate.teardown_fn,
+                )
+            )
+    return narrowed

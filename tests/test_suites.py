@@ -8,7 +8,7 @@ import pytest
 
 from agent import common as lab_common
 from agent.results import RunContext
-from agent.suites import Suite, discover_suites, run_suite, run_suites, suite, suites_in_group
+from agent.suites import Case, Suite, discover_suites, run_suite, run_suites, select_suites, suite, suites_in_group
 
 
 def test_case_registers_in_declaration_order():
@@ -229,6 +229,49 @@ def test_suites_in_group_filters_and_all_bypasses():
     assert [s.name for s in suites_in_group(suites, "core")] == ["a", "c"]
     assert [s.name for s in suites_in_group(suites, "stream-hardening")] == ["b"]
     assert [s.name for s in suites_in_group(suites, "all")] == ["a", "b", "c"]
+
+
+def _selectable_suites() -> list[Suite]:
+    core_a = Suite(name="core-a", group="core", cases=[Case("CA-01", lambda ctx: None), Case("CA-02", lambda ctx: None)])
+    core_b = Suite(name="core-b", group="core", cases=[Case("CB-01", lambda ctx: None)])
+    hardening = Suite(name="stream", group="stream-hardening", cases=[Case("ST-01", lambda ctx: None)])
+    return [core_a, core_b, hardening]
+
+
+def test_select_suites_defaults_to_all_when_nothing_given():
+    suites = _selectable_suites()
+    assert [s.name for s in select_suites(suites)] == ["core-a", "core-b", "stream"]
+
+
+def test_select_suites_by_group():
+    suites = _selectable_suites()
+    assert [s.name for s in select_suites(suites, group="core")] == ["core-a", "core-b"]
+
+
+def test_select_suites_by_only_selects_a_single_named_suite():
+    suites = _selectable_suites()
+    assert [s.name for s in select_suites(suites, only="core-b")] == ["core-b"]
+
+
+def test_select_suites_by_only_unknown_name_raises_with_available_list():
+    with pytest.raises(SystemExit, match="core-a, core-b, stream"):
+        select_suites(_selectable_suites(), only="does-not-exist")
+
+
+def test_select_suites_by_group_unknown_raises_with_available_list():
+    with pytest.raises(SystemExit, match="core, stream-hardening"):
+        select_suites(_selectable_suites(), group="does-not-exist")
+
+
+def test_select_suites_narrows_to_one_case_within_the_group():
+    suites = select_suites(_selectable_suites(), group="core", case="CA-02")
+    assert [s.name for s in suites] == ["core-a"]
+    assert [c.test_id for c in suites[0].cases] == ["CA-02"]
+
+
+def test_select_suites_case_narrowing_drops_suites_with_no_matching_case():
+    suites = select_suites(_selectable_suites(), case="CB-01")
+    assert [s.name for s in suites] == ["core-b"]
 
 
 def test_discovery_order_is_by_declared_order_then_name(tmp_path):
