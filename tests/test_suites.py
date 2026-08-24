@@ -265,6 +265,29 @@ def test_run_suites_writes_one_result_json_per_suite_and_reports_no_failure(tmp_
     assert (tmp_path / "results-also-passing.json").exists()
 
 
+def test_run_suites_with_live_progress_forced_on_still_produces_correct_results(tmp_path, capsys):
+    passing = suite("passing")
+
+    @passing.case("P-01")
+    def p1(ctx):
+        ctx.ok("P-01", "fine")
+
+    broken = suite("broken")
+
+    @broken.case("B-01")
+    def b1(ctx):
+        ctx.fail("B-01", "nope")
+
+    summary = run_suites([passing, broken], results_dir=tmp_path, label="Test Lab", live_progress=True)
+
+    assert summary.failed is True
+    assert [r.suite_name for r in summary.results] == ["passing", "broken"]
+    out = capsys.readouterr().out
+    assert "Test Lab" in out
+    assert "[PASS] P-01: fine" in out
+    assert "[FAIL] B-01: nope" in out
+
+
 def test_run_suites_reports_failed_when_any_case_fails(tmp_path):
     broken = suite("broken")
 

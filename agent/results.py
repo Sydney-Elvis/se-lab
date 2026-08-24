@@ -17,7 +17,10 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from .dashboard import LiveDashboard
 
 
 @dataclass
@@ -41,9 +44,10 @@ class TestResult:
 
 
 class RunContext:
-    def __init__(self, suite: str, *, emit_progress: bool = True) -> None:
+    def __init__(self, suite: str, *, emit_progress: bool = True, dashboard: "LiveDashboard | None" = None) -> None:
         self.suite = suite
         self.emit_progress = emit_progress
+        self.dashboard = dashboard
         self.results: list[TestResult] = []
 
     def _record(self, result: TestResult) -> TestResult:
@@ -51,7 +55,14 @@ class RunContext:
         if self.emit_progress:
             self._write_progress_event(result)
         label = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
+        if self.dashboard is not None:
+            self.dashboard.clear()  # own the terminal for this one print, same as any other plain output
         print(f"  [{label}] {result.name}: {result.message}", flush=True)
+        if self.dashboard is not None:
+            self.dashboard.record_result(
+                name=result.name, status=result.status, completed=len(self.results), failed=result.failed
+            )
+            self.dashboard.render()
         return result
 
     def _write_progress_event(self, result: TestResult) -> None:
@@ -107,6 +118,8 @@ class RunContext:
         return sum(1 for r in self.results if r.status == "skip")
 
     def print_summary(self) -> None:
+        if self.dashboard is not None:
+            self.dashboard.clear()
         total = len(self.results)
         print(f"\n--- {self.suite}: {self.passed_count}/{total} passed, {self.skipped_count} skipped ---", flush=True)
         if self.failed_count:

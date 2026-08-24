@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from agent.dashboard import LiveDashboard
 from agent.results import RunContext
 
 
@@ -71,3 +72,29 @@ def test_no_progress_file_set_means_no_file_written(tmp_path, monkeypatch):
     ctx = RunContext("demo-suite")
     ctx.ok("t1", "worked")
     assert list(tmp_path.iterdir()) == []
+
+
+def test_record_updates_and_clears_dashboard_without_raising(capsys):
+    dashboard = LiveDashboard("Test Lab", 1)
+    dashboard.start_suite("demo-suite", 1, test_total=2)
+    ctx = RunContext("demo-suite", emit_progress=False, dashboard=dashboard)
+    ctx.ok("t1", "worked")
+    assert dashboard.test_count == 1
+    assert dashboard.latest_name == "t1"
+    assert dashboard.any_failed is False
+    ctx.fail("t2", "broke")
+    assert dashboard.test_count == 2
+    assert dashboard.any_failed is True
+    out = capsys.readouterr().out
+    assert "[PASS] t1: worked" in out
+    assert "[FAIL] t2: broke" in out
+
+
+def test_print_summary_clears_the_dashboard_first():
+    dashboard = LiveDashboard("Test Lab", 1)
+    dashboard.start_suite("demo-suite", 1, test_total=1)
+    ctx = RunContext("demo-suite", emit_progress=False, dashboard=dashboard)
+    ctx.ok("t1", "worked")
+    assert dashboard.rendered is True
+    ctx.print_summary()
+    assert dashboard.rendered is False

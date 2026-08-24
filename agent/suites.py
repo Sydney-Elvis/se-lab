@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .dashboard import LiveDashboard
 from .results import RunContext
 
 CaseFunc = Callable[..., None]
@@ -177,7 +178,9 @@ class SuitesRunSummary:
     failed: bool
 
 
-def run_suites(suites: list[Suite], *, results_dir: Path, **base_context: Any) -> SuitesRunSummary:
+def run_suites(
+    suites: list[Suite], *, results_dir: Path, label: str = "Lab", live_progress: bool | None = None, **base_context: Any
+) -> SuitesRunSummary:
     """Run each suite in order: print a header, run it, print its summary,
     write its JSON artifact, and track whether anything failed (a case
     failure, a suite setup failure, or result-count drift).
@@ -189,12 +192,25 @@ def run_suites(suites: list[Suite], *, results_dir: Path, **base_context: Any) -
     parameter name (e.g. `base_url=` for a shared-instance product,
     `scenario_factory=` for one that isolates a fresh environment per case) --
     this function doesn't need to know which.
+
+    `label` names the dashboard's title line (e.g. "M3Undle Lab") -- purely
+    cosmetic, se-lab has no way to know a product's display name otherwise.
+    `live_progress` overrides LiveDashboard.supported()'s TTY/env autodetect
+    when set explicitly (e.g. a test forcing it off); leave it None normally.
     """
+    dashboard = None
+    if live_progress if live_progress is not None else LiveDashboard.supported():
+        dashboard = LiveDashboard(label, len(suites))
+
     results: list[SuiteRunResult] = []
     failed = False
-    for target in suites:
-        print(f"\n--- Running suite: {target.name} ---", flush=True)
-        context = RunContext(target.name)
+    for index, target in enumerate(suites, start=1):
+        if dashboard is not None:
+            dashboard.start_suite(target.name, index, test_total=len(target.cases))
+            dashboard.render()
+        else:
+            print(f"\n--- Running suite: {target.name} ---", flush=True)
+        context = RunContext(target.name, dashboard=dashboard)
         result = run_suite(target, context, **base_context)
         context.print_summary()
         context.write_json(results_dir / f"results-{target.name}.json")
@@ -208,6 +224,8 @@ def run_suites(suites: list[Suite], *, results_dir: Path, **base_context: Any) -
         if context.failed_count or result.drifted or not result.setup_ok:
             failed = True
         results.append(result)
+    if dashboard is not None:
+        dashboard.clear()
     return SuitesRunSummary(results=results, failed=failed)
 
 
