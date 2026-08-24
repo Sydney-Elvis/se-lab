@@ -80,6 +80,9 @@ class _FakeDashboard:
     def render(self):
         pass
 
+    def maybe_render(self, **kwargs):
+        pass
+
 
 def test_run_suite_suppresses_case_prints_on_success_when_dashboard_active(capfd):
     # capfd, not capsys: RunContext._record() and LiveDashboard both write

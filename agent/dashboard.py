@@ -47,6 +47,14 @@ class LiveDashboard:
     GREEN = "\x1b[1;32m"
     RED = "\x1b[1;31m"
     YELLOW = "\x1b[1;33m"
+    # Fast, back-to-back test results (sub-100ms apart -- confirmed against a
+    # real run: a suite made entirely of quick, no-wait assertions) each
+    # trigger their own clear()-before-print; over real network latency (SSH
+    # in particular) the redraw that follows may never visibly land before
+    # the next result's clear() wipes it again, so the dashboard appears to
+    # vanish for the whole suite rather than blip once. maybe_render() rate-
+    # limits to this interval, always forcing through on a failure.
+    MIN_RENDER_INTERVAL = 0.15
 
     def __init__(self, label: str, suite_total: int) -> None:
         self.label = label
@@ -60,6 +68,7 @@ class LiveDashboard:
         self.any_failed = False
         self.started = time.monotonic()
         self.rendered = False
+        self._last_render_at = 0.0
 
     @staticmethod
     def supported() -> bool:
@@ -149,6 +158,20 @@ class LiveDashboard:
             stream.write("\x1b[2K" + line + "\n")
         stream.flush()
         self.rendered = True
+        self._last_render_at = time.monotonic()
+
+    def maybe_render(self, *, force: bool = False) -> None:
+        """render(), unless the previous render happened too recently and
+        this isn't a moment that must be shown regardless (force=True for a
+        failure -- never worth missing). See MIN_RENDER_INTERVAL's own
+        comment for why this exists. Internal state (record_result()) is
+        always kept current regardless of whether this actually redraws --
+        callers should call record_result() unconditionally and only gate
+        the render itself through this method.
+        """
+        if not force and (time.monotonic() - self._last_render_at) < self.MIN_RENDER_INTERVAL:
+            return
+        self.render()
 
     def clear(self) -> None:
         if not self.rendered:

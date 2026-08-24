@@ -68,7 +68,10 @@ class RunContext:
             self.dashboard.record_result(
                 name=result.name, status=result.status, completed=len(self.results), failed=result.failed
             )
-            self.dashboard.render()
+            # force on a failure -- never worth rate-limiting away; see
+            # LiveDashboard.MIN_RENDER_INTERVAL's own comment for why this
+            # is a maybe_render(), not an unconditional render().
+            self.dashboard.maybe_render(force=result.failed)
         return result
 
     def _write_progress_event(self, result: TestResult) -> None:

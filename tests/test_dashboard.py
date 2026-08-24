@@ -61,3 +61,45 @@ def test_clear_before_first_render_is_a_noop(capsys):
     dashboard = LiveDashboard("Test Lab", 1)
     dashboard.clear()  # must not write cursor-control codes with nothing on screen yet
     assert capsys.readouterr().out == ""
+
+
+def test_maybe_render_skips_when_called_again_too_soon(capfd, monkeypatch):
+    dashboard = LiveDashboard("Test Lab", 1)
+    dashboard.start_suite("suite-a", 1, test_total=5)
+    dashboard.render()
+    capfd.readouterr()  # discard the first render's output
+
+    now = [1000.0]
+    monkeypatch.setattr("agent.dashboard.time.monotonic", lambda: now[0])
+    dashboard._last_render_at = now[0]
+    now[0] += 0.01  # well under MIN_RENDER_INTERVAL
+    dashboard.maybe_render()
+    assert capfd.readouterr().out == ""
+
+
+def test_maybe_render_renders_once_the_interval_has_passed(capfd, monkeypatch):
+    dashboard = LiveDashboard("Test Lab", 1)
+    dashboard.start_suite("suite-a", 1, test_total=5)
+    dashboard.render()
+    capfd.readouterr()
+
+    now = [1000.0]
+    monkeypatch.setattr("agent.dashboard.time.monotonic", lambda: now[0])
+    dashboard._last_render_at = now[0]
+    now[0] += LiveDashboard.MIN_RENDER_INTERVAL + 0.01
+    dashboard.maybe_render()
+    assert "Test Lab" in capfd.readouterr().out
+
+
+def test_maybe_render_force_always_renders_even_when_too_soon(capfd, monkeypatch):
+    dashboard = LiveDashboard("Test Lab", 1)
+    dashboard.start_suite("suite-a", 1, test_total=5)
+    dashboard.render()
+    capfd.readouterr()
+
+    now = [1000.0]
+    monkeypatch.setattr("agent.dashboard.time.monotonic", lambda: now[0])
+    dashboard._last_render_at = now[0]
+    now[0] += 0.01
+    dashboard.maybe_render(force=True)
+    assert "Test Lab" in capfd.readouterr().out

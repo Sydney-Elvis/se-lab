@@ -93,6 +93,27 @@ def test_record_updates_and_clears_dashboard_without_raising(capfd):
     assert "[FAIL] t2: broke" in out
 
 
+def test_record_rate_limits_dashboard_redraws_but_never_the_pass_fail_line(capfd, monkeypatch):
+    # Two results back-to-back, both passing, faster than
+    # LiveDashboard.MIN_RENDER_INTERVAL apart: the [PASS] lines must always
+    # show (RunContext's own print isn't rate-limited, only the dashboard's
+    # own redraw is), but only the first result's redraw should land.
+    dashboard = LiveDashboard("Test Lab", 1)
+    dashboard.start_suite("demo-suite", 1, test_total=2)
+    ctx = RunContext("demo-suite", emit_progress=False, dashboard=dashboard)
+
+    now = [1000.0]
+    monkeypatch.setattr("agent.dashboard.time.monotonic", lambda: now[0])
+    ctx.ok("t1", "worked")  # dashboard._last_render_at starts at 0.0 -- always renders
+    now[0] += 0.01  # well under MIN_RENDER_INTERVAL
+    ctx.ok("t2", "worked again")
+
+    out = capfd.readouterr().out
+    assert out.count("[PASS] t1: worked") == 1
+    assert out.count("[PASS] t2: worked again") == 1
+    assert out.count("Test Lab") == 1  # only t1's redraw actually landed
+
+
 def test_print_summary_clears_the_dashboard_first():
     dashboard = LiveDashboard("Test Lab", 1)
     dashboard.start_suite("demo-suite", 1, test_total=1)
