@@ -751,6 +751,57 @@ def compose_ps() -> None:
     run(compose_command("ps"))
 
 
+def _compose_ps_entries() -> list[dict[str, Any]]:
+    """Parse `compose ps --format json`. Compose versions disagree on shape --
+    a JSON array on newer releases, one JSON object per line on older ones --
+    so try both rather than pin to one."""
+    result = run_capture(compose_command("ps", "--format", "json"), check=False)
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    output = result.stdout.strip()
+    try:
+        parsed = json.loads(output)
+        return parsed if isinstance(parsed, list) else [parsed]
+    except json.JSONDecodeError:
+        pass
+    entries: list[dict[str, Any]] = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries
+
+
+def published_ports() -> list[tuple[str, str]]:
+    """(service, "published->target/protocol") for each host port this
+    project's containers currently publish, per `compose ps`."""
+    pairs: list[tuple[str, str]] = []
+    for entry in _compose_ps_entries():
+        service = entry.get("Service") or entry.get("Name") or "?"
+        for publisher in entry.get("Publishers") or []:
+            published = publisher.get("PublishedPort")
+            if not published:
+                continue
+            target = publisher.get("TargetPort", "?")
+            protocol = publisher.get("Protocol", "tcp")
+            pairs.append((service, f"{published}->{target}/{protocol}"))
+    return pairs
+
+
+def print_published_ports() -> None:
+    pairs = published_ports()
+    if not pairs:
+        print("No host ports published by this stack.", flush=True)
+        return
+    print("Published ports:", flush=True)
+    for service, mapping in pairs:
+        print(f"  {service}: {mapping}", flush=True)
+
+
 def compose_logs(tail: int, service: str) -> None:
     run(compose_command("logs", "--tail", str(tail), service))
 
@@ -1060,6 +1111,7 @@ def deploy_branch(branch: str, repo_url: str | None = None, *, extra_compose_fil
     sync_runtime_compose()
     set_deployment_metadata("branch", branch, image=image, source_commit=commit)
     compose_up(extra_compose_files=extra_compose_files)
+    print_published_ports()
     print(f"Branch '{branch}' is deployed.", flush=True)
     return image
 
@@ -1080,6 +1132,7 @@ def deploy_source_tag(tag: str, repo_url: str | None = None, *, extra_compose_fi
     sync_runtime_compose()
     set_deployment_metadata("source-tag", tag, image=image, source_commit=commit)
     compose_up(extra_compose_files=extra_compose_files)
+    print_published_ports()
     print(f"Tag '{tag}' is built from source and deployed.", flush=True)
     return image
 
@@ -1095,6 +1148,7 @@ def deploy_current_branch(repo_url: str | None = None, *, extra_compose_files: S
     sync_runtime_compose()
     set_deployment_metadata("branch", branch, image=image, source_commit=commit)
     compose_up(extra_compose_files=extra_compose_files)
+    print_published_ports()
     print(f"Current checkout branch '{branch}' is deployed.", flush=True)
     return branch, image
 
@@ -1106,6 +1160,7 @@ def deploy_tag(tag: str, image_repo: str | None = None, *, extra_compose_files: 
     sync_runtime_compose()
     set_deployment_metadata("tag", tag, image=image)
     compose_up(extra_compose_files=extra_compose_files)
+    print_published_ports()
     print(f"Tag '{tag}' is deployed.", flush=True)
     return image
 

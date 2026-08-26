@@ -7,7 +7,9 @@ in a product lab's own package (registered the same way — see agent/registry.p
 `status`, `run`, `recreate`, `analyze`, `build`, `pull`, `logs`, and
 `checklist` have no se-lab built-in and never will -- each product lab
 registers its own, built on the generic helpers in agent/common.py (see
-docs/design.md's plugin-interface example). `down` is the one lifecycle verb
+docs/design.md's plugin-interface example). `status` specifically should
+subclass `agent.status.BaseStatus` rather than hand-roll its sections --
+see docs/design.md's Status Reporting section. `down` is the one lifecycle verb
 se-lab does provide as a built-in (agent/commands/down.py) since "stop the
 current compose stack" generalizes; a product lab should not also register a
 top-level `down` (registry.command() raises on the duplicate name). For

@@ -93,6 +93,10 @@ reimplement `docker compose` calls by hand:
 - `compose_command()`, `compose_up()`, `compose_up_only()`, `compose_down()`, `compose_ps()`,
   `compose_logs()` — Compose up/down/status/log capture, with `extra_compose_files=` for
   scenario-specific overrides layered on your base compose file
+- `published_ports()` / `print_published_ports()` — host ports currently published by this
+  project's containers, read from `compose ps --format json`. Every `deploy_*()` helper below
+  prints this right after bringing the stack up, so `./lab up` always ends with a list of what's
+  actually reachable instead of just "deployed."
 - Environment loading from `lab.env`
 - Deployment metadata (image digest, timestamp, branch)
 
@@ -143,6 +147,50 @@ class CWAClient(ClientPlugin):
 ```
 
 For clients that are manual-only (e.g. Jellyfin for M3Undle), `verify()` is not implemented and `se-lab` falls through to checklist generation.
+
+### Status Reporting (`agent/status.BaseStatus`)
+
+`status` is not a se-lab built-in and never will be — naming stays with the product lab, same as
+`run`/`build`/`recreate`/etc. (see `agent/cli.py`'s docstring). What's shared instead is a base
+class every product lab's own `status` command subclasses, so the runtime/deployment/compose-ps/
+client reporting — identical on every lab — is written once instead of hand-rolled per product.
+This is the standard shape for any future cross-lab command: the product lab keeps ownership of
+registration, se-lab supplies a subclassable base that does the generic 90%, following the same
+pattern as `ClientPlugin`/`AnalysisPlugin`/`SettingsPlugin` above rather than a registration
+callback invented just for this one command.
+
+```python
+from agent.status import BaseStatus
+
+class FamilyLibrarianStatus(BaseStatus):
+    def extra(self) -> int:
+        # Product-specific probes (HTTP health, readiness, DB state, ...).
+        # Print whatever you want appended, then return the exit code `status` should use.
+        result = _readiness_probe()
+        print(json.dumps({"health": result}, indent=2), flush=True)
+        return 0 if result["ok"] else 1
+
+@registry.command("status", help="Show Family Librarian status")
+def handle_status(args: argparse.Namespace, config: Config) -> int:
+    return FamilyLibrarianStatus().run()
+```
+
+`BaseStatus.run()` prints, in order:
+- `deployment_lines()` — runtime dir, current image, deployment source/commit/update time,
+  deployed source checkout branch/commit, last test result. All read from `common.py`'s existing
+  deployment-metadata helpers.
+- `print_compose_state()` — `compose ps` plus `published_ports()` for every service. This is
+  where "what application is up, what port is it listening on" lives: the application is just
+  another compose service, no different from a client's, so it needs no special-casing.
+- `client_lines()` — one line per client active in `COMPOSE_PROFILES`, cross-referencing each
+  registered `ClientPlugin`'s `compose_service` against `published_ports()` for
+  version/ready/ports. *Which* clients exist (Jellyfin, CWA, ABS, ...) is per-product; "list the
+  active ones with version/ready/ports" isn't.
+- `extra()` — the product-specific hook above, default no-op returning exit 0.
+
+Every method is independently overridable, not just `extra()` — a product lab that wants to
+reorder, drop, or annotate a generic section overrides that one method and calls `super()` itself
+rather than treating the base report as opaque.
 
 ### Settings Archives (`./lab settings`)
 

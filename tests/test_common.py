@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
@@ -148,6 +149,7 @@ def _stub_deploy_internals(monkeypatch):
     monkeypatch.setattr(lab_common, "set_deployment_metadata", lambda *a, **kw: None)
     calls: list[tuple] = []
     monkeypatch.setattr(lab_common, "compose_up", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(lab_common, "print_published_ports", lambda: None)
     monkeypatch.setenv("SELFTEST_REPO_URL", "https://example.invalid/repo.git")
     monkeypatch.setenv("SELFTEST_GHCR_IMAGE", "ghcr.example.invalid/selftest")
     return calls
@@ -336,6 +338,49 @@ def test_ensure_required_host_ports_available_aborts_when_declined(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     with pytest.raises(SystemExit, match="Aborted"):
         lab_common.ensure_required_host_ports_available(timeout_seconds=0)
+
+
+class _FakeCompletedProcess:
+    def __init__(self, returncode: int, stdout: str):
+        self.returncode = returncode
+        self.stdout = stdout
+
+
+def test_published_ports_parses_json_array_from_compose_ps(monkeypatch):
+    monkeypatch.setattr(lab_common, "compose_command", lambda *a, **kw: ["docker", "compose", "ps", "--format", "json"])
+    payload = json.dumps([
+        {"Service": "web", "Publishers": [{"PublishedPort": 8080, "TargetPort": 80, "Protocol": "tcp"}]},
+        {"Service": "db", "Publishers": []},
+    ])
+    monkeypatch.setattr(lab_common, "run_capture", lambda cmd, **kw: _FakeCompletedProcess(0, payload))
+    assert lab_common.published_ports() == [("web", "8080->80/tcp")]
+
+
+def test_published_ports_parses_json_lines_from_older_compose(monkeypatch):
+    monkeypatch.setattr(lab_common, "compose_command", lambda *a, **kw: ["docker-compose", "ps", "--format", "json"])
+    line1 = json.dumps({"Service": "web", "Publishers": [{"PublishedPort": 5432, "TargetPort": 5432, "Protocol": "tcp"}]})
+    line2 = json.dumps({"Service": "worker", "Publishers": None})
+    monkeypatch.setattr(lab_common, "run_capture", lambda cmd, **kw: _FakeCompletedProcess(0, f"{line1}\n{line2}\n"))
+    assert lab_common.published_ports() == [("web", "5432->5432/tcp")]
+
+
+def test_published_ports_empty_when_compose_ps_fails(monkeypatch):
+    monkeypatch.setattr(lab_common, "compose_command", lambda *a, **kw: ["docker", "compose", "ps"])
+    monkeypatch.setattr(lab_common, "run_capture", lambda cmd, **kw: _FakeCompletedProcess(1, ""))
+    assert lab_common.published_ports() == []
+
+
+def test_print_published_ports_reports_none_when_empty(monkeypatch, capsys):
+    monkeypatch.setattr(lab_common, "published_ports", lambda: [])
+    lab_common.print_published_ports()
+    assert "No host ports published" in capsys.readouterr().out
+
+
+def test_print_published_ports_lists_service_and_mapping(monkeypatch, capsys):
+    monkeypatch.setattr(lab_common, "published_ports", lambda: [("web", "8080->80/tcp")])
+    lab_common.print_published_ports()
+    out = capsys.readouterr().out
+    assert "web: 8080->80/tcp" in out
 
 
 def test_clear_active_dashboard_is_a_noop_when_none_registered():
