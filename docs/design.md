@@ -162,7 +162,7 @@ callback invented just for this one command.
 ```python
 from agent.status import BaseStatus
 
-class FamilyLibrarianStatus(BaseStatus):
+class M3UndleStatus(BaseStatus):
     def extra(self) -> int:
         # Product-specific probes (HTTP health, readiness, DB state, ...).
         # Print whatever you want appended, then return the exit code `status` should use.
@@ -170,9 +170,9 @@ class FamilyLibrarianStatus(BaseStatus):
         print(json.dumps({"health": result}, indent=2), flush=True)
         return 0 if result["ok"] else 1
 
-@registry.command("status", help="Show Family Librarian status")
+@registry.command("status", help="Show M3Undle status")
 def handle_status(args: argparse.Namespace, config: Config) -> int:
-    return FamilyLibrarianStatus().run()
+    return M3UndleStatus().run()
 ```
 
 `BaseStatus.run()` prints, in order:
@@ -191,6 +191,50 @@ def handle_status(args: argparse.Namespace, config: Config) -> int:
 Every method is independently overridable, not just `extra()` — a product lab that wants to
 reorder, drop, or annotate a generic section overrides that one method and calls `super()` itself
 rather than treating the base report as opaque.
+
+**Only fits the one-deployed-instance model.** Every method above reads through `common.py`'s
+`runtime_dir()`/`compose_command()`/`project_name()` — one fixed Compose project, synced from a
+template. A lab that instead runs many ad-hoc, uniquely-named Compose projects (e.g. one per test
+scenario, compose file living directly in-repo rather than template-synced) doesn't fit this shape
+and would need to override nearly every method, which defeats the point of subclassing. Confirmed
+for real: `family-librarian-lab` is that second shape (per-scenario ephemeral projects) and does
+*not* subclass `BaseStatus` — its `handle_status` stays hand-rolled, correctly, not as unfinished
+adoption. Check which shape your lab actually is before assuming this fits.
+
+### External Simulators (`agent/simulators/base.ExternalSimulator`)
+
+A lab may need a local/Docker-backed fake of an external dependency to test against —
+`m3undle-lab`'s provider simulator (a fake IPTV/VOD provider) is the first real example. The
+generic 90% of that — backend selection (local subprocess vs. Docker container), process/container
+lifecycle, stale-port cleanup, health polling, context-manager teardown — has nothing to do with
+what's actually being simulated, so it lives in `ExternalSimulator`, same subclass-a-base-class
+shape as `ClientPlugin`/`BaseStatus` above. A subclass supplies only what's inherently per-engine:
+
+```python
+from agent.simulators.base import ExternalSimulator
+
+class MyEngineSimulator(ExternalSimulator):
+    engine_env_var = "MYPRODUCT_SIMULATOR_ENGINE_DIR"
+    backend_env_var = "MYPRODUCT_SIMULATOR_BACKEND"
+    image_env_var = "MYPRODUCT_SIMULATOR_IMAGE"
+    default_image = "myproduct-lab/engine-sim:dev"
+    container_name_prefix = "myproduct-sim"
+    docker_label_prefix = "com.myproduct-lab"
+    process_marker = "engine_sim.py"  # substring in `ps`/`ss` cmdline output, for stale-port cleanup
+
+    def local_command(self, engine_dir: Path) -> list[str]:
+        return [sys.executable, str(engine_dir / "src" / "engine_sim.py"), "--port", str(self.port)]
+
+    def docker_run_args(self, image: str) -> list[str]:
+        return ["--port", str(self.port)]
+```
+
+`local_command()`/`docker_run_args()` are the only abstract methods — everything else (fixture/
+scenario bind-mounts via `container_path_for()`, image build-if-default, health polling against
+`health_check_path`, `reset()` via `reset_path`) is implemented once here. See
+`m3undle_lab/simulator.py`'s `SimulatorInstance` for the real, in-use example this was extracted
+from — it kept its own constructor (`fixture=`, `max_streams=`) and `playlist_url` convention,
+neither of which is generic enough to belong in the base class.
 
 ### Settings Archives (`./lab settings`)
 
