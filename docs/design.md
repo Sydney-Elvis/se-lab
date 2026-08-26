@@ -351,3 +351,63 @@ Both target the same M3Undle instance. Test results are compared suite-by-suite 
 - Fixtures or test data
 - Hardcoded service names, ports, or URLs
 - AI model names (all via `lab.env`)
+
+## Guardrail: Where New Lifecycle Code Belongs
+
+**This section exists because the drift it describes already happened once and cost real
+audit/reconstruction time to find and undo.** family-librarian-lab was scaffolded without going
+through this check, ended up with its own hand-rolled `docker compose ps --format json` parser
+next to se-lab's, and that parser only handled one of the two shapes Compose actually emits (see
+`_compose_ps_entries()`'s history below) -- a real bug, not just duplication, sitting undetected
+in a second copy of logic se-lab had already gotten wrong once and fixed. Don't let it happen a
+third time.
+
+**Before writing any new subprocess/compose/env-loading/suite-selection/status-reporting code in
+a product lab, run this check first, in order:**
+
+1. **Does `agent.common`, `agent.suites`, `agent.status`, or an existing plugin ABC
+   (`ClientPlugin`/`AnalysisPlugin`/`SettingsPlugin`/`DatabasePlugin`) already do this?** Grep
+   se-lab before writing a subprocess wrapper, an env-file loader, a `compose ps` parser, a suite
+   selector, or a status report section. If it exists, call it. Don't re-derive it because the
+   product lab's own file already imports fewer things, or because it "seemed small enough to
+   just write."
+2. **If it doesn't exist yet, is it product-specific, or would any second product lab need the
+   same thing?** Use the three-tier split already applied throughout `agent/common.py` (see that
+   file's own module docstring) as the actual test, not a vibe check:
+   - **Tier A -- fully generic:** ports to se-lab unchanged. (Subprocess lifecycle, JSON/text
+     parsing of a third-party tool's output, port-conflict detection, dashboard coordination --
+     none of this cares what product is under test.)
+   - **Tier B -- generic mechanism, product-specific naming only:** ports to se-lab, parametrized
+     by `runtime.PRODUCT_NAME`/`runtime.ENV_PREFIX` (see `agent/runtime.py`'s `configure()`) the
+     same way `_repo_url_env_key()`, `_ghcr_image_env_key()`, `settings_passphrase()`, etc.
+     already are. A product-specific *name* is not the same thing as product-specific *logic*.
+   - **Tier C -- real product logic:** stays in the product lab. Credential bootstrapping, a
+     specific client app's own state manipulation, hardcoded network/image defaults for a
+     specific app.
+   If step 2 lands on Tier A or B and a second consumer would plausibly want it, that is the
+   signal to add it to se-lab now, not to write it locally "for now" and reconcile later --
+   "later" is how family-librarian-lab ended up with a second, worse copy of `_compose_ps_entries()`'s
+   already-solved shape problem.
+3. **Does the mechanism assume se-lab's single fixed `project_name()`/one-stack-per-lab model, or
+   does the product lab need its own ad-hoc/per-scenario project naming?** That's a real
+   architectural difference (family-librarian-lab's disposable-project-per-test-case model is not
+   a mistake), but it is *not* a license to reimplement everything downstream of that one
+   difference. Split the reusable, naming-independent part out as a pure function the product lab
+   can call directly (see `parse_compose_ps_json()`, extracted from `_compose_ps_entries()`
+   specifically so a lab running its own ad-hoc `docker compose -p <name> ps --format json`
+   still gets the shape-handling for free) rather than treating "our project-naming is different"
+   as justification for owning the whole subprocess-to-parsed-result path again.
+
+**When you do add something to se-lab as a result of this check:** write it with tests that cover
+the edge case that motivated it (the array-vs-JSON-lines split has two dedicated tests in
+`tests/test_common.py` for exactly this reason), document which tier it is and why in a docstring
+or comment the way the rest of `agent/common.py` already does, and update this doc's Components
+section so the next person doesn't have to rediscover it exists.
+
+**Submodule pins are part of this guardrail, not a separate concern.** A product lab pinned many
+commits behind se-lab's `main` is a product lab slowly re-growing duplication it has no way to see
+-- `select_suites()` was extracted specifically because two product labs had independently
+hand-rolled the same suite/case-selection logic, and a stale pin is exactly what let a *third*
+hand-rolled copy exist again in the interim. Bump a product lab's se-lab pin regularly (not only
+when a specific new feature is needed), and when you bump it, actually check the commits crossed
+for anything the product lab should now delete its own copy of.

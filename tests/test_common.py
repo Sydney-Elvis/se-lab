@@ -346,6 +346,31 @@ class _FakeCompletedProcess:
         self.stdout = stdout
 
 
+def test_parse_compose_ps_json_handles_array_shape():
+    # A lab that runs `docker compose -p <its own ad-hoc project> ps --format
+    # json` itself (rather than through compose_command()'s fixed
+    # project_name()) still needs this exact parsing -- this is the function
+    # such a caller should reach for directly instead of hand-rolling it.
+    payload = json.dumps([
+        {"Service": "web", "State": "running"},
+        {"Service": "db", "State": "running"},
+    ])
+    entries = lab_common.parse_compose_ps_json(payload)
+    assert [e["Service"] for e in entries] == ["web", "db"]
+
+
+def test_parse_compose_ps_json_handles_json_lines_shape():
+    line1 = json.dumps({"Service": "web", "State": "running"})
+    line2 = json.dumps({"Service": "db", "State": "exited"})
+    entries = lab_common.parse_compose_ps_json(f"{line1}\n{line2}\n")
+    assert [e["Service"] for e in entries] == ["web", "db"]
+
+
+def test_parse_compose_ps_json_empty_input():
+    assert lab_common.parse_compose_ps_json("") == []
+    assert lab_common.parse_compose_ps_json("   \n  ") == []
+
+
 def test_published_ports_parses_json_array_from_compose_ps(monkeypatch):
     monkeypatch.setattr(lab_common, "compose_command", lambda *a, **kw: ["docker", "compose", "ps", "--format", "json"])
     payload = json.dumps([

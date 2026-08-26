@@ -751,21 +751,31 @@ def compose_ps() -> None:
     run(compose_command("ps"))
 
 
-def _compose_ps_entries() -> list[dict[str, Any]]:
-    """Parse `compose ps --format json`. Compose versions disagree on shape --
-    a JSON array on newer releases, one JSON object per line on older ones --
-    so try both rather than pin to one."""
-    result = run_capture(compose_command("ps", "--format", "json"), check=False)
-    if result.returncode != 0 or not result.stdout.strip():
+def parse_compose_ps_json(output: str) -> list[dict[str, Any]]:
+    """Parse the stdout of `compose ps --format json`. Compose versions
+    disagree on shape -- a JSON array on newer releases, one JSON object per
+    line on older ones -- so try both rather than pin to one.
+
+    Deliberately a pure function over text, not tied to compose_command()'s
+    fixed single-project-per-lab assumption: a lab that manages its own
+    per-scenario/per-run Compose project names (running `docker compose
+    -p <ad-hoc-name> ps --format json` itself, outside compose_command())
+    still needs this exact same parsing -- getting the shape wrong is not a
+    hypothetical, see the family-librarian-lab audit finding it was missing
+    entirely. Call this directly on your own subprocess's stdout rather than
+    re-deriving it; don't re-derive compose_command()'s own project_name()
+    assumption just to reach this parsing logic.
+    """
+    text = output.strip()
+    if not text:
         return []
-    output = result.stdout.strip()
     try:
-        parsed = json.loads(output)
+        parsed = json.loads(text)
         return parsed if isinstance(parsed, list) else [parsed]
     except json.JSONDecodeError:
         pass
     entries: list[dict[str, Any]] = []
-    for line in output.splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -774,6 +784,17 @@ def _compose_ps_entries() -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return entries
+
+
+def _compose_ps_entries() -> list[dict[str, Any]]:
+    """This lab's own `compose ps --format json`, via compose_command()'s
+    fixed project_name(). See parse_compose_ps_json() for the shape-handling
+    itself, which is what a lab using its own ad-hoc project name should call
+    directly instead of this function."""
+    result = run_capture(compose_command("ps", "--format", "json"), check=False)
+    if result.returncode != 0:
+        return []
+    return parse_compose_ps_json(result.stdout)
 
 
 def published_ports() -> list[tuple[str, str]]:
