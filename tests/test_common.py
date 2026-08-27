@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 import pytest
@@ -338,6 +339,47 @@ def test_ensure_required_host_ports_available_aborts_when_declined(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     with pytest.raises(SystemExit, match="Aborted"):
         lab_common.ensure_required_host_ports_available(timeout_seconds=0)
+
+
+def test_run_lock_allows_reacquisition_once_released(monkeypatch, tmp_path):
+    monkeypatch.setenv("SELFTEST_RUNTIME_DIR", str(tmp_path))
+    with lab_common.run_lock():
+        assert (tmp_path / "run.lock").exists()
+    assert not (tmp_path / "run.lock").exists()
+    with lab_common.run_lock():
+        assert (tmp_path / "run.lock").exists()
+
+
+def test_run_lock_releases_even_when_the_guarded_body_raises(monkeypatch, tmp_path):
+    monkeypatch.setenv("SELFTEST_RUNTIME_DIR", str(tmp_path))
+    with pytest.raises(RuntimeError, match="boom"):
+        with lab_common.run_lock():
+            raise RuntimeError("boom")
+    assert not (tmp_path / "run.lock").exists()
+
+
+def test_run_lock_blocks_when_the_holder_pid_is_still_alive(monkeypatch, tmp_path):
+    monkeypatch.setenv("SELFTEST_RUNTIME_DIR", str(tmp_path))
+    (tmp_path / "run.lock").write_text("424242", encoding="utf-8")
+    monkeypatch.setattr(lab_common, "_pid_alive", lambda pid: True)
+    with pytest.raises(SystemExit, match="already in progress"):
+        with lab_common.run_lock(label="lab run"):
+            raise AssertionError("must not enter the guarded body")
+    # Held, not reclaimed -- the file (and its PID) must be left exactly as
+    # another live invocation of run_lock() itself left it.
+    assert (tmp_path / "run.lock").read_text(encoding="utf-8") == "424242"
+
+
+def test_run_lock_reclaims_a_stale_lock_from_a_dead_pid(monkeypatch, tmp_path):
+    monkeypatch.setenv("SELFTEST_RUNTIME_DIR", str(tmp_path))
+    (tmp_path / "run.lock").write_text("424242", encoding="utf-8")
+    monkeypatch.setattr(lab_common, "_pid_alive", lambda pid: False)
+    entered = False
+    with lab_common.run_lock():
+        entered = True
+        assert (tmp_path / "run.lock").read_text(encoding="utf-8") == str(os.getpid())
+    assert entered
+    assert not (tmp_path / "run.lock").exists()
 
 
 class _FakeCompletedProcess:

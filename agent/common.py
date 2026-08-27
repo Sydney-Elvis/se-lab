@@ -26,6 +26,7 @@ three tiers:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -37,7 +38,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 from . import registry, runtime
 
@@ -727,6 +728,72 @@ def ensure_required_host_ports_available(*, timeout_seconds: float = 10.0) -> No
         raise SystemExit("Aborted: required ports are still in use by another lab/project.")
     for name in conflicting:
         run(["docker", "stop", name])
+
+
+# ---------------------------------------------------------------------------
+# single-instance guard
+# ---------------------------------------------------------------------------
+
+
+def _run_lock_path() -> Path:
+    return runtime_dir() / "run.lock"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+@contextlib.contextmanager
+def run_lock(*, label: str = "lab run") -> Iterator[None]:
+    """Refuse to start a second lifecycle command (run/up/recreate) against
+    this same runtime dir while one is already in progress.
+
+    Without this, an overlapping or crashed/interrupted-without-cleanup
+    invocation collides with the next one on whatever host port or compose
+    project it still holds -- Docker reports a raw port-bind failure with no
+    indication another lab invocation is the actual cause (confirmed for
+    real against family-librarian-lab: an interrupted `run` left a container
+    holding its fixed host port, and the next `run` died deep inside a
+    suite's own compose up with no hint why). A lock whose owning PID is no
+    longer alive is reclaimed automatically -- a killed or crashed process
+    never gets a chance to clean its own lock file up.
+
+    Best-effort, like the PID-based cleanup in agent/simulators/base.py, not
+    a formally airtight distributed lock -- reclaiming a lock whose writer
+    is caught between creating and writing the file is a theoretical race
+    not worth engineering around for a human-driven CLI.
+    """
+    ensure_layout()
+    path = _run_lock_path()
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            holder_text = path.read_text(encoding="utf-8").strip() if path.exists() else ""
+            holder = int(holder_text) if holder_text.isdigit() else None
+            if holder is not None and _pid_alive(holder):
+                raise SystemExit(
+                    f"Another {label} is already in progress (PID {holder}, lock file: {path}). "
+                    "Wait for it to finish, or remove the lock file yourself if you're sure it's stale."
+                )
+            path.unlink(missing_ok=True)
+            continue
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(str(os.getpid()))
+            break
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def compose_up(*, extra_compose_files: Sequence[Path] = ()) -> None:
