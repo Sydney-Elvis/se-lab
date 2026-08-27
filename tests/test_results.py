@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import io
 import json
+
+from rich.console import Console
 
 from agent.dashboard import LiveDashboard
 from agent.results import RunContext
+
+
+def _dashboard(label="Test Lab", suite_total=1) -> tuple[LiveDashboard, io.StringIO]:
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=True, width=100)
+    return LiveDashboard(label, suite_total, console=console), buffer
 
 
 def test_run_context_counts_and_exit_code():
@@ -74,11 +83,8 @@ def test_no_progress_file_set_means_no_file_written(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_record_updates_and_clears_dashboard_without_raising(capfd):
-    # capfd, not capsys: RunContext._record() writes via sys.__stdout__
-    # deliberately, so it stays visible even under run_suite()'s own
-    # redirect. capsys only tracks sys.stdout-level writes.
-    dashboard = LiveDashboard("Test Lab", 1)
+def test_record_updates_dashboard_and_prints_through_it_without_raising():
+    dashboard, buffer = _dashboard()
     dashboard.start_suite("demo-suite", 1, test_total=2)
     ctx = RunContext("demo-suite", emit_progress=False, dashboard=dashboard)
     ctx.ok("t1", "worked")
@@ -88,17 +94,17 @@ def test_record_updates_and_clears_dashboard_without_raising(capfd):
     ctx.fail("t2", "broke")
     assert dashboard.test_count == 2
     assert dashboard.any_failed is True
-    out = capfd.readouterr().out
+    out = buffer.getvalue()
     assert "[PASS] t1: worked" in out
     assert "[FAIL] t2: broke" in out
 
 
-def test_record_rate_limits_dashboard_redraws_but_never_the_pass_fail_line(capfd, monkeypatch):
+def test_record_rate_limits_dashboard_redraws_but_never_the_pass_fail_line(monkeypatch):
     # Two results back-to-back, both passing, faster than
     # LiveDashboard.MIN_RENDER_INTERVAL apart: the [PASS] lines must always
     # show (RunContext's own print isn't rate-limited, only the dashboard's
     # own redraw is), but only the first result's redraw should land.
-    dashboard = LiveDashboard("Test Lab", 1)
+    dashboard, buffer = _dashboard()
     dashboard.start_suite("demo-suite", 1, test_total=2)
     ctx = RunContext("demo-suite", emit_progress=False, dashboard=dashboard)
 
@@ -108,17 +114,23 @@ def test_record_rate_limits_dashboard_redraws_but_never_the_pass_fail_line(capfd
     now[0] += 0.01  # well under MIN_RENDER_INTERVAL
     ctx.ok("t2", "worked again")
 
-    out = capfd.readouterr().out
+    out = buffer.getvalue()
     assert out.count("[PASS] t1: worked") == 1
     assert out.count("[PASS] t2: worked again") == 1
-    assert out.count("Test Lab") == 1  # only t1's redraw actually landed
+    assert dashboard.test_count == 2  # state is always current...
+    assert "Last test: [PASS] t2" not in out  # ...even though t2's own redraw was rate-limited
 
 
-def test_print_summary_clears_the_dashboard_first():
-    dashboard = LiveDashboard("Test Lab", 1)
+def test_print_summary_prints_through_the_dashboard_without_stopping_it():
+    # Unlike the old manual-ANSI implementation, the live footer no longer
+    # needs to be torn down and redrawn around every suite's summary --
+    # printing through the dashboard's own console (see LiveDashboard.print())
+    # interleaves correctly while the footer keeps running.
+    dashboard, buffer = _dashboard()
     dashboard.start_suite("demo-suite", 1, test_total=1)
     ctx = RunContext("demo-suite", emit_progress=False, dashboard=dashboard)
     ctx.ok("t1", "worked")
     assert dashboard.rendered is True
     ctx.print_summary()
-    assert dashboard.rendered is False
+    assert dashboard.rendered is True
+    assert "demo-suite: 1/1 passed" in buffer.getvalue()

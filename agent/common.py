@@ -138,7 +138,7 @@ def format_duration(seconds: float | int | None) -> str:
 
 _COMMAND_PROGRESS_CALLBACK: Callable[[Sequence[str], str], None] | None = None
 _COMMAND_PROGRESS_LOG: Path | None = None
-_ACTIVE_DASHBOARD: Any | None = None  # duck-typed: anything with a no-arg .clear()
+_ACTIVE_DASHBOARD: Any | None = None  # duck-typed: anything with a .print(text)
 
 
 def set_command_progress(
@@ -156,10 +156,11 @@ def set_command_progress(
 
 def set_active_dashboard(dashboard: Any | None) -> None:
     """Register the currently-running LiveDashboard (or None), so run()/
-    run_capture() -- and any other code about to print or hand a subprocess
-    the real terminal -- can clear it first.
+    run_capture() -- and any other code about to print while a dashboard
+    might be active -- can route through it instead of writing to the
+    terminal directly.
 
-    Duck-typed (just needs .clear()), not agent.dashboard.LiveDashboard
+    Duck-typed (just needs .print()), not agent.dashboard.LiveDashboard
     directly: dashboard.py already imports from this module for
     format_duration(), so importing LiveDashboard back here would cycle.
     """
@@ -167,27 +168,65 @@ def set_active_dashboard(dashboard: Any | None) -> None:
     _ACTIVE_DASHBOARD = dashboard
 
 
-def clear_active_dashboard() -> None:
-    """Clear the registered dashboard (if any) right before anything prints
-    or a subprocess inherits the terminal directly -- a docker/git/compose
-    call's own output has no way to coordinate with the dashboard's in-place
-    redraw otherwise, and WILL corrupt it (confirmed: the dashboard assumes
-    its own last render is still the last thing on screen; anything else
-    printed in between makes its next clear()'s cursor-up land in the wrong
-    place). Safe to call even when no dashboard is active -- a no-op then.
-    """
-    if _ACTIVE_DASHBOARD is not None:
-        _ACTIVE_DASHBOARD.clear()
-
-
 def active_dashboard() -> Any | None:
     """The registered dashboard (or None) -- for a product lab's own
     subprocess call that bypasses run()/run_capture() (e.g. one that needs
-    its own project-name/profile plumbing) to decide whether to capture and
-    suppress its output instead of letting it inherit the terminal raw.
-    Mirrors run()'s own capture-when-a-dashboard-is-active behavior.
+    its own project-name/profile plumbing) to decide whether to route its
+    own output through the dashboard the same way run() does.
     """
     return _ACTIVE_DASHBOARD
+
+
+def _dashboard_subprocess_env(env: dict[str, str] | None) -> dict[str, str]:
+    """Env for a subprocess whose output will be streamed line-by-line
+    through the dashboard's Rich console while a live footer is active.
+
+    Piping stdout (rather than inheriting the terminal) already makes most
+    CLIs auto-detect a non-tty and degrade to plain, sequential output, but
+    Docker Compose/BuildKit's own animated multi-line progress renderers
+    aren't fully consistent about that across versions -- forcing them
+    explicitly avoids their own cursor-addressing competing with the live
+    footer's, which piping alone doesn't guarantee.
+    """
+    merged = dict(env) if env is not None else dict(os.environ)
+    merged.setdefault("COMPOSE_ANSI_MODE", "never")
+    merged.setdefault("BUILDKIT_PROGRESS", "plain")
+    return merged
+
+
+def stream_subprocess_to_dashboard(
+    dashboard: Any,
+    command: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Run `command`, printing its combined stdout/stderr through
+    `dashboard.print()` line-by-line as it arrives, so it scrolls above the
+    live footer in real time instead of being captured and suppressed. Used
+    by run() whenever a dashboard is active, and directly by a product lab's
+    own subprocess wrapper that bypasses run() (see family_librarian_lab's
+    commands.py `_compose()`).
+    """
+    dashboard.print(f"+ {format_command(command)}")
+    process = subprocess.Popen(
+        command,
+        cwd=str(cwd) if cwd else None,
+        env=_dashboard_subprocess_env(env),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        dashboard.print(line.rstrip("\n"))
+    return_code = process.wait()
+    result = subprocess.CompletedProcess(command, return_code)
+    if check and return_code != 0:
+        raise subprocess.CalledProcessError(return_code, command)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -544,32 +583,14 @@ def run(
         if check and return_code != 0:
             raise subprocess.CalledProcessError(return_code, command)
         return result
-    clear_active_dashboard()
-    print(f"+ {format_command(command)}", flush=True)
     if _ACTIVE_DASHBOARD is not None:
-        # Capture instead of inheriting the terminal: letting a subprocess's
-        # own multi-line output (docker compose's progress spinner, in
-        # particular) print raw is what breaks "the dashboard stays pinned
-        # to the bottom" -- it just scrolls away with everything else, same
-        # as any other terminal output, clear_active_dashboard() above only
-        # stops it from corrupting the dashboard's own redraw math. The
-        # legacy lab's own dashboard avoids this differently but for the
-        # same reason: it never lets a suite subprocess's output touch the
-        # terminal directly while a dashboard owns the screen (captures it
-        # via Popen+PIPE, feeds a progress callback instead of printing
-        # raw). Simplified here to capture-and-suppress, surfaced only on
-        # failure so debugging isn't harder than before.
-        result = subprocess.run(
-            command, cwd=str(cwd) if cwd else None, env=env, check=False, text=True, capture_output=True
-        )
-        if result.returncode != 0:
-            if result.stdout:
-                sys.stdout.write(result.stdout)
-            if result.stderr:
-                sys.stderr.write(result.stderr)
-            if check:
-                raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout, stderr=result.stderr)
-        return result
+        # Stream instead of inheriting the terminal: a subprocess's own
+        # multi-line output (docker compose's progress, in particular) still
+        # needs to appear live, but it can't be handed the real terminal
+        # directly while a live footer owns the bottom of the screen -- see
+        # stream_subprocess_to_dashboard()'s own docstring.
+        return stream_subprocess_to_dashboard(_ACTIVE_DASHBOARD, command, cwd=cwd, env=env, check=check)
+    print(f"+ {format_command(command)}", flush=True)
     return subprocess.run(command, cwd=str(cwd) if cwd else None, env=env, check=check, text=True)
 
 
@@ -580,8 +601,15 @@ def run_capture(
     env: dict[str, str] | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    clear_active_dashboard()
-    print(f"+ {format_command(command)}", flush=True)
+    """Run `command` fully captured and silent -- for callers that want the
+    output programmatically, not shown live. Its own trace line still routes
+    through the dashboard when one is active, same as run(), so it doesn't
+    corrupt the live footer."""
+    message = f"+ {format_command(command)}"
+    if _ACTIVE_DASHBOARD is not None:
+        _ACTIVE_DASHBOARD.print(message)
+    else:
+        print(message, flush=True)
     return subprocess.run(command, cwd=str(cwd) if cwd else None, env=env, check=check, text=True, capture_output=True)
 
 

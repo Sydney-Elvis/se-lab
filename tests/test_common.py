@@ -450,68 +450,41 @@ def test_print_published_ports_lists_service_and_mapping(monkeypatch, capsys):
     assert "web: 8080->80/tcp" in out
 
 
-def test_clear_active_dashboard_is_a_noop_when_none_registered():
+class _FakeDashboard:
+    """Duck-typed stand-in for LiveDashboard -- just needs .print()."""
+
+    def __init__(self):
+        self.printed: list[str] = []
+
+    def print(self, text, **kwargs):
+        self.printed.append(text)
+
+
+def test_active_dashboard_is_none_when_none_registered():
     lab_common.set_active_dashboard(None)
-    lab_common.clear_active_dashboard()  # must not raise
+    assert lab_common.active_dashboard() is None
 
 
-def test_clear_active_dashboard_calls_clear_on_the_registered_object():
-    calls = []
-
-    class FakeDashboard:
-        def clear(self):
-            calls.append("cleared")
-
-    lab_common.set_active_dashboard(FakeDashboard())
+def test_set_active_dashboard_registers_the_object():
+    dashboard = _FakeDashboard()
+    lab_common.set_active_dashboard(dashboard)
     try:
-        lab_common.clear_active_dashboard()
-        assert calls == ["cleared"]
+        assert lab_common.active_dashboard() is dashboard
     finally:
         lab_common.set_active_dashboard(None)
 
 
-def test_run_clears_the_active_dashboard_before_handing_over_the_terminal(monkeypatch):
-    calls = []
-
-    class FakeDashboard:
-        def clear(self):
-            calls.append("cleared")
-
-    lab_common.set_active_dashboard(FakeDashboard())
-    try:
-        lab_common.run(["true"])
-        assert calls == ["cleared"]
-    finally:
-        lab_common.set_active_dashboard(None)
-
-
-def test_run_capture_clears_the_active_dashboard_before_handing_over_the_terminal():
-    calls = []
-
-    class FakeDashboard:
-        def clear(self):
-            calls.append("cleared")
-
-    lab_common.set_active_dashboard(FakeDashboard())
-    try:
-        lab_common.run_capture(["echo", "hi"])
-        assert calls == ["cleared"]
-    finally:
-        lab_common.set_active_dashboard(None)
-
-
-def test_run_suppresses_subprocess_output_when_a_dashboard_is_active(capsys):
-    class FakeDashboard:
-        def clear(self):
-            pass
-
-    lab_common.set_active_dashboard(FakeDashboard())
+def test_run_streams_subprocess_output_live_through_the_dashboard():
+    # Unlike the old capture-and-suppress-until-failure behavior, subprocess
+    # output must now show live regardless of exit status -- see
+    # agent/common.py's stream_subprocess_to_dashboard().
+    dashboard = _FakeDashboard()
+    lab_common.set_active_dashboard(dashboard)
     try:
         # $((6*7)) so the produced output (42) never appears in the command
         # argv itself -- only in what the subprocess actually prints.
         lab_common.run(["sh", "-c", "echo $((6*7))"])
-        out = capsys.readouterr().out
-        assert "42" not in out
+        assert any("42" in line for line in dashboard.printed)
     finally:
         lab_common.set_active_dashboard(None)
 
@@ -528,31 +501,33 @@ def test_run_still_inherits_the_terminal_when_no_dashboard_is_active(capfd):
     assert "42" in out
 
 
-def test_run_surfaces_captured_output_on_failure_even_with_a_dashboard_active(capsys):
-    class FakeDashboard:
-        def clear(self):
-            pass
-
-    lab_common.set_active_dashboard(FakeDashboard())
+def test_run_surfaces_streamed_output_on_failure_with_a_dashboard_active():
+    dashboard = _FakeDashboard()
+    lab_common.set_active_dashboard(dashboard)
     try:
         with pytest.raises(subprocess.CalledProcessError):
             # $((6*7)) so the surfaced output (42) is unambiguously from the
             # subprocess's own stdout, not the "+ command" trace line.
             lab_common.run(["sh", "-c", "echo $((6*7)); exit 1"])
-        out = capsys.readouterr().out
-        assert "42" in out
+        assert any("42" in line for line in dashboard.printed)
     finally:
         lab_common.set_active_dashboard(None)
 
 
 def test_run_no_check_returns_failed_result_without_raising_when_dashboard_active():
-    class FakeDashboard:
-        def clear(self):
-            pass
-
-    lab_common.set_active_dashboard(FakeDashboard())
+    lab_common.set_active_dashboard(_FakeDashboard())
     try:
         result = lab_common.run(["sh", "-c", "exit 3"], check=False)
         assert result.returncode == 3
+    finally:
+        lab_common.set_active_dashboard(None)
+
+
+def test_run_capture_prints_its_trace_line_through_the_dashboard_when_active():
+    dashboard = _FakeDashboard()
+    lab_common.set_active_dashboard(dashboard)
+    try:
+        lab_common.run_capture(["echo", "hi"])
+        assert any("echo hi" in line for line in dashboard.printed)
     finally:
         lab_common.set_active_dashboard(None)

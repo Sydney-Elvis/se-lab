@@ -167,13 +167,15 @@ def run_suite(target: Suite, ctx: RunContext, **base_context: Any) -> SuiteRunRe
     dashboard = ctx.dashboard
 
     def _flush(buffer: io.StringIO) -> None:
+        # Only ever called with a buffer that exists because a dashboard is
+        # active (see the `buffer = io.StringIO() if dashboard is not None
+        # else None` calls below) -- dashboard.print() routes through its own
+        # console so this interleaves correctly with a live footer instead of
+        # writing the real fd directly.
         content = buffer.getvalue()
         if not content:
             return
-        if dashboard is not None:
-            dashboard.clear()
-        sys.__stdout__.write(content)
-        sys.__stdout__.flush()
+        dashboard.print(content, end="")
 
     if target.setup_fn is not None:
         buffer = io.StringIO() if dashboard is not None else None
@@ -212,7 +214,11 @@ def run_suite(target: Suite, ctx: RunContext, **base_context: Any) -> SuiteRunRe
             except Exception as exc:  # noqa: BLE001 - teardown failing must not mask results
                 if buffer is not None:
                     _flush(buffer)
-                print(f"Warning: {target.name} teardown raised: {exc}", flush=True, file=sys.__stdout__)
+                message = f"Warning: {target.name} teardown raised: {exc}"
+                if dashboard is not None:
+                    dashboard.print(message)
+                else:
+                    print(message, flush=True, file=sys.__stdout__)
 
     return SuiteRunResult(
         suite_name=target.name,
@@ -254,29 +260,28 @@ def run_suites(
         dashboard = LiveDashboard(label, len(suites), plain=LiveDashboard.mode() == "plain")
         # So common.run()/run_capture() -- and anything else that shells out
         # during a case (a scenario's own compose up/down, a mid-suite
-        # restart_stack_with_env()) -- can clear the dashboard before handing
-        # a subprocess the real terminal. Without this, that subprocess's own
-        # output (docker compose's animated progress, in particular) prints
-        # underneath the dashboard's last render with no coordination, and
-        # the dashboard's next clear() then erases the wrong lines, having
-        # lost track of how many lines have gone by since it last drew.
+        # restart_stack_with_env()) -- can stream its output through the same
+        # dashboard instead of inheriting the terminal directly.
         common.set_active_dashboard(dashboard)
+
+    def _emit(text: str) -> None:
+        # Routed through the dashboard when one is active so it interleaves
+        # correctly with the live footer instead of writing the real fd
+        # directly; durable either way, so scrollback/log capture always has
+        # a permanent trace of which suite was attempted -- not just the live
+        # footer's transient state -- if the suite dies before recording a
+        # single result (e.g. its scenario's own compose up fails or hangs
+        # before any case runs).
+        if dashboard is not None:
+            dashboard.print(text)
+        else:
+            print(text, flush=True, file=sys.__stdout__)
 
     results: list[SuiteRunResult] = []
     failed = False
     try:
         for index, target in enumerate(suites, start=1):
-            # Durable even with a dashboard active: printed straight to
-            # sys.__stdout__, same as RunContext._record()/print_summary(),
-            # so scrollback/log capture always has a permanent trace of
-            # which suite was attempted -- not just the in-place block --
-            # if the suite dies before recording a single result (e.g. its
-            # scenario's own compose up fails or hangs before any case runs,
-            # which the in-place-only version left with zero trace of what
-            # was even in flight).
-            if dashboard is not None:
-                dashboard.clear()
-            print(f"\n--- Running suite: {target.name} ---", flush=True, file=sys.__stdout__)
+            _emit(f"\n--- Running suite: {target.name} ---")
             if dashboard is not None:
                 dashboard.start_suite(target.name, index, test_total=len(target.cases))
                 dashboard.render()
@@ -285,18 +290,15 @@ def run_suites(
             context.print_summary()
             context.write_json(results_dir / f"results-{target.name}.json")
             if not result.setup_ok:
-                print(f"  Setup failed: {result.setup_error}", flush=True)
+                _emit(f"  Setup failed: {result.setup_error}")
             if result.drifted:
-                print(
-                    f"  Result drift: expected {result.expected} registered cases, recorded {result.actual} outcomes.",
-                    flush=True,
-                )
+                _emit(f"  Result drift: expected {result.expected} registered cases, recorded {result.actual} outcomes.")
             if context.failed_count or result.drifted or not result.setup_ok:
                 failed = True
             results.append(result)
     finally:
         if dashboard is not None:
-            dashboard.clear()
+            dashboard.stop()
             common.set_active_dashboard(None)
     return SuitesRunSummary(results=results, failed=failed)
 

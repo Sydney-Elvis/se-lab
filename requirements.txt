@@ -4,3 +4,4 @@
 # Keep in sync with pyproject.toml's [project.dependencies].
 PyYAML~=6.0
 requests~=2.31
+rich~=15.0

@@ -56,14 +56,19 @@ class RunContext:
         if self.emit_progress:
             self._write_progress_event(result)
         label = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}[result.status]
+        line = f"  [{label}] {result.name}: {result.message}"
         if self.dashboard is not None:
-            self.dashboard.clear()  # own the terminal for this one print, same as any other plain output
-        # sys.__stdout__, not print()/sys.stdout: run_suite() redirects
-        # sys.stdout to a capture buffer for the duration of a case's own
-        # execution (so a suite's own debug prints don't scroll the
-        # dashboard away), but the case's actual pass/fail result must
-        # always be visible live, redirect or not.
-        print(f"  [{label}] {result.name}: {result.message}", flush=True, file=sys.__stdout__)
+            # Routed through the dashboard's own console so it interleaves
+            # correctly with a live footer (see agent/dashboard.py's
+            # LiveDashboard.print()) instead of writing the real fd directly.
+            self.dashboard.print(line)
+        else:
+            # sys.__stdout__, not print()/sys.stdout: run_suite() redirects
+            # sys.stdout to a capture buffer for the duration of a case's own
+            # execution (so a suite's own debug prints don't scroll away on
+            # success), but the case's actual pass/fail result must always be
+            # visible live, redirect or not.
+            print(line, flush=True, file=sys.__stdout__)
         if self.dashboard is not None:
             self.dashboard.record_result(
                 name=result.name, status=result.status, completed=len(self.results), failed=result.failed
@@ -127,15 +132,18 @@ class RunContext:
         return sum(1 for r in self.results if r.status == "skip")
 
     def print_summary(self) -> None:
-        if self.dashboard is not None:
-            self.dashboard.clear()
         total = len(self.results)
-        print(f"\n--- {self.suite}: {self.passed_count}/{total} passed, {self.skipped_count} skipped ---", flush=True)
+        lines = [f"\n--- {self.suite}: {self.passed_count}/{total} passed, {self.skipped_count} skipped ---"]
         if self.failed_count:
-            print("Failed:", flush=True)
+            lines.append("Failed:")
             for r in self.results:
                 if r.status == "fail":
-                    print(f"  - {r.name}: {r.message}", flush=True)
+                    lines.append(f"  - {r.name}: {r.message}")
+        text = "\n".join(lines)
+        if self.dashboard is not None:
+            self.dashboard.print(text)
+        else:
+            print(text, flush=True)
 
     def to_dict(self) -> dict:
         result_items = []
@@ -156,7 +164,11 @@ class RunContext:
     def write_json(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
-        print(f"Results written to {path}", flush=True)
+        message = f"Results written to {path}"
+        if self.dashboard is not None:
+            self.dashboard.print(message)
+        else:
+            print(message, flush=True)
 
     def exit_code(self) -> int:
         """Return 0 if no failures, 1 if any test failed."""

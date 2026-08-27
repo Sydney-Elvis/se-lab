@@ -1,18 +1,28 @@
-"""Live-updating terminal progress display for a suite run.
+"""Live-updating terminal progress footer for a suite run, built on Rich.
 
-Ported from the frozen legacy lab's scripts/run_integration_tests.py
-LiveDashboard -- confirmed fully product-agnostic before porting
-(progress_bar()/activity_bar() are pure functions; the class itself only
-ever reads suite/test counts and elapsed time, no M3Undle references
-anywhere). The legacy lab drove it by polling an external progress-file
-because the dashboard and the running suite were separate processes there.
-se-lab runs suites in-process, so this version is driven by direct calls
-(render() after each recorded result) instead of file-polling -- same
-visual result, simpler mechanism for this architecture. No background
-ticker thread: elapsed time only advances at each render() call, a
-deliberate simplification to avoid interleaving a second thread's writes
-with the main thread's own prints (see RunContext's clear()-before-print
-coordination, which a ticking thread would race with).
+Replaces the earlier hand-rolled ANSI/cursor-addressing implementation
+(manual "\\x1b[{n}A" cursor-up + "\\x1b[2K" line-clear sequences). That
+approach required every call site that wanted to print anything else --
+a suite's own setup/case/teardown output, a subprocess's stdout, the suite
+header/summary lines -- to explicitly call dashboard.clear() first and
+coordinate line counts by hand, and it was confirmed to fail silently on at
+least one real SSH path for reasons that were never root-caused (see the
+LAB_LIVE_PROGRESS=plain fallback this module still supports).
+
+Rich's Live display removes that whole class of bug: anything printed
+through the *same* Console a Live is bound to is automatically interleaved
+correctly (the live region is cleared, the new content is written above it
+as ordinary scrollback, and the live region is redrawn below) -- no manual
+line-count bookkeeping anywhere. That's why every call site that used to do
+`dashboard.clear()` then write raw now just calls `dashboard.print(...)`.
+
+Three modes, selected by LiveDashboard.mode() (see its docstring):
+- "off": no dashboard at all.
+- "plain": a durable one-line text summary appended on every render(), no
+  box, no cursor addressing -- the fallback for a terminal that claims TTY
+  support but doesn't actually render in-place redraws correctly.
+- "inplace": the live boxed footer (rich.live.Live), suite/test progress
+  shown as real Rich progress bars.
 """
 
 from __future__ import annotations
@@ -21,42 +31,48 @@ import os
 import sys
 import time
 
+from rich.console import Console, Group
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TextColumn
+from rich.text import Text
+
 from .common import format_duration
 
+_STATUS_STYLES = {
+    "PASS": "bold green",
+    "PASSED": "bold green",
+    "FAIL": "bold red",
+    "FAILED": "bold red",
+}
+_OVERALL_STYLES = {"PASS": "green", "FAIL": "red", "RUNNING": "yellow"}
 
-def progress_bar(completed: int, total: int, *, width: int = 20) -> str:
-    if total <= 0:
-        return "[" + "." * width + "]"
-    filled = min(width, max(0, round(width * completed / total)))
-    return "[" + "#" * filled + "." * (width - filled) + "]"
+
+def _status_style(status: str) -> str:
+    return _STATUS_STYLES.get(status, "bold yellow")
 
 
-def activity_bar(position: int, *, width: int = 20) -> str:
-    marker = position % width
-    cells = ["."] * width
-    cells[marker] = ">"
-    for offset in range(1, 4):
-        cells[(marker - offset) % width] = "="
-    return "[" + "".join(cells) + "]"
+def _truncate(text: str, limit: int) -> str:
+    """Degrade a long suite/test name cleanly instead of letting it wrap and
+    blow out the footer's fixed line count."""
+    if limit <= 0 or len(text) <= limit:
+        return text
+    if limit == 1:
+        return text[:1]
+    return text[: limit - 1] + "…"
 
 
 class LiveDashboard:
-    LINE_COUNT = 4
-    RESET = "\x1b[0m"
-    CYAN = "\x1b[1;36m"
-    GREEN = "\x1b[1;32m"
-    RED = "\x1b[1;31m"
-    YELLOW = "\x1b[1;33m"
     # Fast, back-to-back test results (sub-100ms apart -- confirmed against a
     # real run: a suite made entirely of quick, no-wait assertions) each
-    # trigger their own clear()-before-print; over real network latency (SSH
-    # in particular) the redraw that follows may never visibly land before
-    # the next result's clear() wipes it again, so the dashboard appears to
-    # vanish for the whole suite rather than blip once. maybe_render() rate-
-    # limits to this interval, always forcing through on a failure.
+    # trigger their own render(); over real network latency (SSH in
+    # particular) a redraw that fast may never visibly land before the next
+    # result's redraw replaces it, so the dashboard appears to vanish for the
+    # whole suite rather than blip once. maybe_render() rate-limits to this
+    # interval, always forcing through on a failure.
     MIN_RENDER_INTERVAL = 0.15
 
-    def __init__(self, label: str, suite_total: int, *, plain: bool = False) -> None:
+    def __init__(self, label: str, suite_total: int, *, plain: bool = False, console: Console | None = None) -> None:
         self.label = label
         self.suite_total = suite_total
         self.suite = ""
@@ -70,17 +86,32 @@ class LiveDashboard:
         self.rendered = False
         self._last_render_at = 0.0
         # See mode()'s docstring: an append-only durable line per render()
-        # instead of in-place cursor-addressed redraw, for a terminal/SSH
-        # path that doesn't render the latter at all.
+        # instead of the boxed Live footer, for a terminal/SSH path that
+        # doesn't render the latter at all.
         self.plain = plain
+        # sys.__stdout__, not sys.stdout: run_suite() redirects sys.stdout to
+        # a capture buffer for the duration of a suite's own setup/case/
+        # teardown calls (see agent/suites.py), so a suite's own prints don't
+        # scroll the footer away on success -- but the footer itself, and
+        # anything explicitly flushed through it, must keep writing to the
+        # real terminal regardless.
+        self.console = console or Console(file=sys.__stdout__, force_terminal=False if plain else None)
+        self._live: Live | None = None if plain else Live(
+            console=self.console,
+            auto_refresh=False,
+            transient=False,
+            redirect_stdout=False,
+            redirect_stderr=False,
+        )
+        self._started = False
 
     @staticmethod
     def mode() -> str:
         """"0" -> off. "plain" -> always the append-only durable fallback,
         regardless of TTY/TERM (it never uses cursor-addressing, so there's
-        nothing for those to gate). "1" -> force in-place, still subject to
-        the dumb-terminal veto below. Unset -> autodetect in-place from
-        TTY/TERM.
+        nothing for those to gate). "1" -> force the live boxed footer, still
+        subject to the dumb-terminal veto below. Unset -> autodetect the live
+        footer from TTY/TERM.
 
         The "plain" mode exists because in-place redraw can fail silently on
         a real, otherwise-unremarkable terminal/SSH path -- confirmed for
@@ -111,31 +142,36 @@ class LiveDashboard:
     def supported() -> bool:
         return LiveDashboard.mode() != "off"
 
-    @staticmethod
-    def _fit(value: str) -> str:
-        try:
-            columns = os.get_terminal_size(sys.__stdout__.fileno()).columns
-        except (OSError, ValueError, AttributeError):
-            columns = 100
-        return value[: max(20, columns - 12)]
+    def start(self) -> None:
+        """Start the Live footer (idempotent, no-op in plain/off modes).
+        Lazily called from render() -- nothing needs to appear on screen
+        until there's actual suite/test state to show."""
+        if self._live is not None and not self._started:
+            self._live.start()
+            self._started = True
 
-    @classmethod
-    def _status_color(cls, status: str) -> str:
-        if status in {"PASS", "PASSED"}:
-            return cls.GREEN
-        if status in {"FAIL", "FAILED"}:
-            return cls.RED
-        return cls.YELLOW
+    def stop(self) -> None:
+        """Tear down the Live footer at the end of a run, restoring the
+        terminal to a normal scrolling state (cursor visible, no dangling
+        live region). Safe to call multiple times or when never started.
+        No-op in plain mode: nothing was drawn in-place to un-render."""
+        if self.plain:
+            return
+        if self._live is not None and self._started:
+            self._live.stop()
+            self._started = False
+        self.rendered = False
 
-    @classmethod
-    def _line(cls, text: str, *, status: str | None = None) -> str:
-        text = cls._fit(text)
-        prefix = f"{cls.CYAN}===>{cls.RESET} "
-        if status is None:
-            return prefix + f"{cls.CYAN}{text}{cls.RESET}"
-        marker = status.upper()
-        colored_marker = f"{cls._status_color(marker)}{marker}{cls.RESET}"
-        return prefix + f"{cls.CYAN}{text.replace(marker, colored_marker, 1)}{cls.RESET}"
+    def print(self, text: str = "", *, end: str = "\n") -> None:
+        """Write text that must interleave correctly with the live footer --
+        a suite's own captured output, a subprocess's streamed stdout, suite
+        headers/summaries. markup/highlight are disabled because this text
+        is arbitrary (docker output routinely contains literal "[...]"
+        segments that would otherwise be misparsed as Rich markup), and
+        soft_wrap avoids Rich re-wrapping lines that already fit the
+        terminal on their own.
+        """
+        self.console.print(text, end=end, markup=False, highlight=False, soft_wrap=True)
 
     def start_suite(self, name: str, index: int, *, test_total: int) -> None:
         self.suite = name
@@ -152,10 +188,22 @@ class LiveDashboard:
         if failed:
             self.any_failed = True
 
+    def _overall_status(self) -> str:
+        """FAIL as soon as anything has -- otherwise RUNNING until the very
+        last suite's very last test has actually completed, only then PASS.
+        (Not merely "something started": that would flip to PASS after the
+        very first test of the very first suite, well before the run is
+        anywhere near done.)
+        """
+        if self.any_failed:
+            return "FAIL"
+        suites_done = self.suite_index >= self.suite_total
+        tests_done = bool(self.test_total) and self.test_count >= self.test_total
+        return "PASS" if suites_done and tests_done else "RUNNING"
+
     def _plain_summary(self) -> str:
         completed_suites = self.suite_index - 1
-        in_progress = bool(completed_suites or self.test_count)
-        overall = "FAIL" if self.any_failed else ("RUNNING" if not in_progress else "PASS")
+        overall = self._overall_status()
         elapsed = format_duration(int(time.monotonic() - self.started))
         tests = f"{self.test_count}/{self.test_total}" if self.test_total else str(self.test_count)
         last = f"[{self.latest_status}] {self.latest_name}" if self.latest_name != "none yet" else "none yet"
@@ -165,53 +213,71 @@ class LiveDashboard:
             f"Tests {tests} | Elapsed {elapsed} | Last: {last}"
         )
 
+    def _build_renderable(self) -> Panel:
+        completed_suites = min(self.suite_index - 1, self.suite_total) if self.suite_index else 0
+        overall = self._overall_status()
+        elapsed = int(time.monotonic() - self.started)
+
+        name_budget = max(10, self.console.size.width - 30)
+        current_suite = _truncate(self.suite or "starting", name_budget)
+        latest_name = _truncate(self.latest_name, name_budget)
+
+        header = Text.assemble(
+            (f"{self.label} | Testing | Overall ", "bold cyan"),
+            (overall, f"bold {_OVERALL_STYLES.get(overall, 'yellow')}"),
+        )
+
+        progress = Progress(
+            TextColumn("{task.fields[row_label]:<7}"),
+            BarColumn(bar_width=None),
+            TextColumn("{task.fields[counts]}", justify="right"),
+            TextColumn("{task.fields[extra]}"),
+            console=self.console,
+            expand=True,
+        )
+        progress.add_task(
+            "suites",
+            total=max(self.suite_total, 1),
+            completed=min(completed_suites, max(self.suite_total, 1)),
+            row_label="Suites",
+            counts=f"{completed_suites}/{self.suite_total}",
+            extra=f"Current: {current_suite}",
+        )
+        progress.add_task(
+            "tests",
+            total=self.test_total if self.test_total else None,
+            completed=self.test_count,
+            row_label="Tests",
+            counts=f"{self.test_count}/{self.test_total}" if self.test_total else str(self.test_count),
+            extra=f"Elapsed: {format_duration(elapsed)}",
+        )
+
+        if self.latest_name == "none yet":
+            last_line = Text("Last test: none yet")
+        else:
+            last_line = Text.assemble(
+                "Last test: ",
+                (f"[{self.latest_status}]", _status_style(self.latest_status)),
+                f" {latest_name}",
+            )
+
+        return Panel(Group(header, progress, last_line), border_style="cyan", expand=True)
+
     def render(self) -> None:
-        # sys.__stdout__, not sys.stdout: run_suite() redirects sys.stdout to
-        # a capture buffer for the duration of a suite's setup/case/teardown
-        # calls (see agent/suites.py), so a suite's own prints don't scroll
-        # the dashboard away -- but the dashboard itself must keep writing to
-        # the real terminal regardless, or it would capture and hide itself.
-        stream = sys.__stdout__
         if self.plain:
             # Append-only durable line, no cursor-addressing codes at all --
-            # see mode()'s docstring for why this mode exists.
-            stream.write(self._plain_summary() + "\n")
-            stream.flush()
+            # see mode()'s docstring for why this mode exists. soft_wrap:
+            # this is one logical line even if it's wider than the terminal;
+            # let it run off the edge rather than wrapping into several.
+            self.console.print(self._plain_summary(), markup=False, highlight=False, soft_wrap=True)
             self.rendered = True
             self._last_render_at = time.monotonic()
             return
 
-        completed_suites = self.suite_index - 1
-        in_progress = bool(completed_suites or self.test_count)
-        overall = "FAIL" if self.any_failed else ("RUNNING" if not in_progress else "PASS")
-        elapsed = int(time.monotonic() - self.started)
-        lines = [
-            self._line(f"{self.label} | Testing | Overall {overall}", status=overall),
-            self._line(
-                f"Suites {progress_bar(completed_suites, self.suite_total)} "
-                f"{completed_suites}/{self.suite_total} complete | Current: {self.suite or 'starting'}"
-            ),
-            self._line(
-                f"Tests {progress_bar(self.test_count, self.test_total)} "
-                f"{self.test_count}/{self.test_total} complete | Elapsed {format_duration(elapsed)}"
-                if self.test_total
-                else f"Tests {activity_bar(self.test_count + elapsed)} {self.test_count} complete "
-                f"| Elapsed {format_duration(elapsed)}"
-            ),
-            self._line(
-                f"Last test: [{self.latest_status}] {self.latest_name}"
-                if self.latest_name != "none yet"
-                else f"Last test: {self.latest_name}",
-                status=self.latest_status if self.latest_name != "none yet" else None,
-            ),
-        ]
-        if self.rendered:
-            stream.write(f"\x1b[{self.LINE_COUNT}A")
-        else:
-            stream.write("\x1b[?25l")
-        for line in lines:
-            stream.write("\x1b[2K" + line + "\n")
-        stream.flush()
+        self.start()
+        assert self._live is not None
+        self._live.update(self._build_renderable())
+        self._live.refresh()
         self.rendered = True
         self._last_render_at = time.monotonic()
 
@@ -227,17 +293,3 @@ class LiveDashboard:
         if not force and (time.monotonic() - self._last_render_at) < self.MIN_RENDER_INTERVAL:
             return
         self.render()
-
-    def clear(self) -> None:
-        if self.plain:
-            return  # append-only: nothing was drawn in-place to erase
-        if not self.rendered:
-            return
-        stream = sys.__stdout__
-        stream.write(f"\x1b[{self.LINE_COUNT}A")
-        for _ in range(self.LINE_COUNT):
-            stream.write("\x1b[2K\n")
-        stream.write(f"\x1b[{self.LINE_COUNT}A")
-        stream.write("\x1b[?25h")
-        stream.flush()
-        self.rendered = False

@@ -69,10 +69,10 @@ def test_run_suite_calls_every_case_and_matches_expected_to_actual():
 
 class _FakeDashboard:
     def __init__(self):
-        self.clear_calls = 0
+        self.printed: list[str] = []
 
-    def clear(self):
-        self.clear_calls += 1
+    def print(self, text, **kwargs):
+        self.printed.append(text)
 
     def record_result(self, **kwargs):
         pass
@@ -84,11 +84,7 @@ class _FakeDashboard:
         pass
 
 
-def test_run_suite_suppresses_case_prints_on_success_when_dashboard_active(capfd):
-    # capfd, not capsys: RunContext._record() and LiveDashboard both write
-    # via sys.__stdout__ (deliberately, to bypass run_suite()'s own
-    # redirect) -- capsys only tracks sys.stdout-level writes and won't see
-    # them, capfd tracks the real fd underneath.
+def test_run_suite_suppresses_case_prints_on_success_when_dashboard_active():
     s = suite("demo")
 
     @s.case("DEMO-01")
@@ -96,14 +92,15 @@ def test_run_suite_suppresses_case_prints_on_success_when_dashboard_active(capfd
         print("noisy debug line")
         ctx.ok("DEMO-01", "fine")
 
-    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    dashboard = _FakeDashboard()
+    ctx = RunContext("demo", emit_progress=False, dashboard=dashboard)
     run_suite(s, ctx)
-    out = capfd.readouterr().out
+    out = "".join(dashboard.printed)
     assert "noisy debug line" not in out
     assert "[PASS] DEMO-01: fine" in out
 
 
-def test_run_suite_flushes_case_prints_on_explicit_failure_when_dashboard_active(capfd):
+def test_run_suite_flushes_case_prints_on_explicit_failure_when_dashboard_active():
     s = suite("demo")
 
     @s.case("DEMO-01")
@@ -111,14 +108,15 @@ def test_run_suite_flushes_case_prints_on_explicit_failure_when_dashboard_active
         print("useful failure context")
         ctx.fail("DEMO-01", "broke")
 
-    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    dashboard = _FakeDashboard()
+    ctx = RunContext("demo", emit_progress=False, dashboard=dashboard)
     run_suite(s, ctx)
-    out = capfd.readouterr().out
+    out = "".join(dashboard.printed)
     assert "useful failure context" in out
     assert "[FAIL] DEMO-01: broke" in out
 
 
-def test_run_suite_flushes_case_prints_on_unhandled_exception_when_dashboard_active(capfd):
+def test_run_suite_flushes_case_prints_on_unhandled_exception_when_dashboard_active():
     s = suite("demo")
 
     @s.case("DEMO-01")
@@ -126,14 +124,15 @@ def test_run_suite_flushes_case_prints_on_unhandled_exception_when_dashboard_act
         print("about to blow up")
         raise RuntimeError("boom")
 
-    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    dashboard = _FakeDashboard()
+    ctx = RunContext("demo", emit_progress=False, dashboard=dashboard)
     run_suite(s, ctx)
-    out = capfd.readouterr().out
+    out = "".join(dashboard.printed)
     assert "about to blow up" in out
     assert "Unhandled exception in DEMO-01" in out
 
 
-def test_run_suite_suppresses_setup_prints_on_success_when_dashboard_active(capfd):
+def test_run_suite_suppresses_setup_prints_on_success_when_dashboard_active():
     s = suite("demo")
 
     @s.setup
@@ -145,14 +144,15 @@ def test_run_suite_suppresses_setup_prints_on_success_when_dashboard_active(capf
     def c1(ctx, x):
         ctx.ok("DEMO-01", f"x={x}")
 
-    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    dashboard = _FakeDashboard()
+    ctx = RunContext("demo", emit_progress=False, dashboard=dashboard)
     run_suite(s, ctx)
-    out = capfd.readouterr().out
+    out = "".join(dashboard.printed)
     assert "setup noise" not in out
     assert "[PASS] DEMO-01: x=1" in out
 
 
-def test_run_suite_flushes_setup_prints_on_setup_failure_when_dashboard_active(capfd):
+def test_run_suite_flushes_setup_prints_on_setup_failure_when_dashboard_active():
     s = suite("demo")
 
     @s.setup
@@ -164,9 +164,10 @@ def test_run_suite_flushes_setup_prints_on_setup_failure_when_dashboard_active(c
     def c1(ctx):
         ctx.ok("DEMO-01", "unreachable")
 
-    ctx = RunContext("demo", emit_progress=False, dashboard=_FakeDashboard())
+    dashboard = _FakeDashboard()
+    ctx = RunContext("demo", emit_progress=False, dashboard=dashboard)
     run_suite(s, ctx)
-    out = capfd.readouterr().out
+    out = "".join(dashboard.printed)
     assert "setup context before failure" in out
     assert "Suite setup failed" in out
 
