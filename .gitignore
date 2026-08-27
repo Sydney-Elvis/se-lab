@@ -3,6 +3,7 @@ lab.env
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 .pytest_cache/
 results/
 reports/
