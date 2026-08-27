@@ -37,6 +37,21 @@ def test_supported_false_on_dumb_term_even_when_forced(monkeypatch):
     assert LiveDashboard.supported() is False
 
 
+def test_mode_plain_ignores_tty_and_term(monkeypatch):
+    # "plain" never uses cursor-addressing, so unlike "1" it isn't vetoed by
+    # a dumb TERM or a non-tty stdout -- that's the whole point of it.
+    monkeypatch.setenv("LAB_LIVE_PROGRESS", "plain")
+    monkeypatch.setenv("TERM", "dumb")
+    assert LiveDashboard.mode() == "plain"
+    assert LiveDashboard.supported() is True
+
+
+def test_mode_autodetects_inplace_or_off(monkeypatch):
+    monkeypatch.delenv("LAB_LIVE_PROGRESS", raising=False)
+    monkeypatch.setenv("TERM", "dumb")
+    assert LiveDashboard.mode() == "off"
+
+
 def test_render_and_clear_do_not_raise(capfd):
     # capfd, not capsys: LiveDashboard writes via sys.__stdout__ deliberately
     # (see the class docstring/comments) so it stays visible even when
@@ -55,6 +70,28 @@ def test_render_and_clear_do_not_raise(capfd):
     assert dashboard.any_failed is True
     dashboard.clear()
     assert dashboard.rendered is False
+
+
+def test_plain_render_prints_a_durable_line_with_no_cursor_codes(capfd):
+    dashboard = LiveDashboard("Test Lab", 2, plain=True)
+    dashboard.start_suite("suite-a", 1, test_total=3)
+    dashboard.render()
+    dashboard.record_result(name="CASE-01", status="pass", completed=1, failed=False)
+    dashboard.render()
+    out = capfd.readouterr().out
+    assert "\x1b[" not in out  # no cursor-up / clear-line / hide-cursor codes at all
+    assert "CASE-01" in out
+    assert out.count("\n") == 2  # two renders, each one durable line -- nothing overwritten
+
+
+def test_plain_clear_is_always_a_noop(capfd):
+    dashboard = LiveDashboard("Test Lab", 1, plain=True)
+    dashboard.start_suite("suite-a", 1, test_total=1)
+    dashboard.render()
+    capfd.readouterr()
+    dashboard.clear()
+    assert capfd.readouterr().out == ""
+    assert dashboard.rendered is True  # nothing to un-render in plain mode
 
 
 def test_clear_before_first_render_is_a_noop(capsys):

@@ -56,7 +56,7 @@ class LiveDashboard:
     # limits to this interval, always forcing through on a failure.
     MIN_RENDER_INTERVAL = 0.15
 
-    def __init__(self, label: str, suite_total: int) -> None:
+    def __init__(self, label: str, suite_total: int, *, plain: bool = False) -> None:
         self.label = label
         self.suite_total = suite_total
         self.suite = ""
@@ -69,14 +69,47 @@ class LiveDashboard:
         self.started = time.monotonic()
         self.rendered = False
         self._last_render_at = 0.0
+        # See mode()'s docstring: an append-only durable line per render()
+        # instead of in-place cursor-addressed redraw, for a terminal/SSH
+        # path that doesn't render the latter at all.
+        self.plain = plain
+
+    @staticmethod
+    def mode() -> str:
+        """"0" -> off. "plain" -> always the append-only durable fallback,
+        regardless of TTY/TERM (it never uses cursor-addressing, so there's
+        nothing for those to gate). "1" -> force in-place, still subject to
+        the dumb-terminal veto below. Unset -> autodetect in-place from
+        TTY/TERM.
+
+        The "plain" mode exists because in-place redraw can fail silently on
+        a real, otherwise-unremarkable terminal/SSH path -- confirmed for
+        real against family-librarian-lab's toontown-int-srv2: the in-place
+        block never rendered even once, from two different local SSH clients
+        (Windows and macOS), while the identical se-lab commit's identical
+        code rendered correctly for the same user against a second host
+        (toontown-int-srv1). Kernel, sshd version/config, `stty -a`, Python
+        version, locale, shell startup files, and local SSH client config
+        were all confirmed byte-identical between the two hosts -- so rather
+        than depend on figuring out that remaining, unexplained difference,
+        "plain" sidesteps it: plain print() lines are what the durable
+        [PASS]/[FAIL] lines already use (see RunContext._record()), and
+        those are confirmed to render fine everywhere in-place redraw fails.
+        """
+        value = os.environ.get("LAB_LIVE_PROGRESS")
+        if value == "0":
+            return "off"
+        if value == "plain":
+            return "plain"
+        if os.environ.get("TERM", "") == "dumb":
+            return "off"
+        if value == "1" or sys.stdout.isatty():
+            return "inplace"
+        return "off"
 
     @staticmethod
     def supported() -> bool:
-        forced = os.environ.get("LAB_LIVE_PROGRESS") == "1"
-        disabled = os.environ.get("LAB_LIVE_PROGRESS") == "0"
-        if disabled:
-            return False
-        return (forced or sys.stdout.isatty()) and os.environ.get("TERM", "") != "dumb"
+        return LiveDashboard.mode() != "off"
 
     @staticmethod
     def _fit(value: str) -> str:
@@ -119,7 +152,35 @@ class LiveDashboard:
         if failed:
             self.any_failed = True
 
+    def _plain_summary(self) -> str:
+        completed_suites = self.suite_index - 1
+        in_progress = bool(completed_suites or self.test_count)
+        overall = "FAIL" if self.any_failed else ("RUNNING" if not in_progress else "PASS")
+        elapsed = format_duration(int(time.monotonic() - self.started))
+        tests = f"{self.test_count}/{self.test_total}" if self.test_total else str(self.test_count)
+        last = f"[{self.latest_status}] {self.latest_name}" if self.latest_name != "none yet" else "none yet"
+        return (
+            f"  ===> {self.label} | Overall {overall} | "
+            f"Suites {completed_suites}/{self.suite_total} (current: {self.suite or 'starting'}) | "
+            f"Tests {tests} | Elapsed {elapsed} | Last: {last}"
+        )
+
     def render(self) -> None:
+        # sys.__stdout__, not sys.stdout: run_suite() redirects sys.stdout to
+        # a capture buffer for the duration of a suite's setup/case/teardown
+        # calls (see agent/suites.py), so a suite's own prints don't scroll
+        # the dashboard away -- but the dashboard itself must keep writing to
+        # the real terminal regardless, or it would capture and hide itself.
+        stream = sys.__stdout__
+        if self.plain:
+            # Append-only durable line, no cursor-addressing codes at all --
+            # see mode()'s docstring for why this mode exists.
+            stream.write(self._plain_summary() + "\n")
+            stream.flush()
+            self.rendered = True
+            self._last_render_at = time.monotonic()
+            return
+
         completed_suites = self.suite_index - 1
         in_progress = bool(completed_suites or self.test_count)
         overall = "FAIL" if self.any_failed else ("RUNNING" if not in_progress else "PASS")
@@ -144,12 +205,6 @@ class LiveDashboard:
                 status=self.latest_status if self.latest_name != "none yet" else None,
             ),
         ]
-        # sys.__stdout__, not sys.stdout: run_suite() redirects sys.stdout to
-        # a capture buffer for the duration of a suite's setup/case/teardown
-        # calls (see agent/suites.py), so a suite's own prints don't scroll
-        # the dashboard away -- but the dashboard itself must keep writing to
-        # the real terminal regardless, or it would capture and hide itself.
-        stream = sys.__stdout__
         if self.rendered:
             stream.write(f"\x1b[{self.LINE_COUNT}A")
         else:
@@ -174,6 +229,8 @@ class LiveDashboard:
         self.render()
 
     def clear(self) -> None:
+        if self.plain:
+            return  # append-only: nothing was drawn in-place to erase
         if not self.rendered:
             return
         stream = sys.__stdout__

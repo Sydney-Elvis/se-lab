@@ -251,7 +251,7 @@ def run_suites(
     """
     dashboard = None
     if live_progress if live_progress is not None else LiveDashboard.supported():
-        dashboard = LiveDashboard(label, len(suites))
+        dashboard = LiveDashboard(label, len(suites), plain=LiveDashboard.mode() == "plain")
         # So common.run()/run_capture() -- and anything else that shells out
         # during a case (a scenario's own compose up/down, a mid-suite
         # restart_stack_with_env()) -- can clear the dashboard before handing
