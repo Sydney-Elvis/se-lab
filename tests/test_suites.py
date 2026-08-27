@@ -477,6 +477,37 @@ def test_run_suites_prints_durable_suite_header_even_with_dashboard_active(tmp_p
     assert "--- Running suite: base-security ---" in out
 
 
+def test_run_suites_final_render_reflects_true_completion_despite_rate_limiting(tmp_path, capfd, monkeypatch):
+    # Regression, confirmed against a real run: LiveDashboard.maybe_render()
+    # rate-limits mid-run redraws (MIN_RENDER_INTERVAL), which for a suite of
+    # fast, back-to-back passing cases can leave the box showing a stale
+    # snapshot from several results ago as its very last visible state before
+    # teardown. run_suites()'s finally block now forces one last unthrottled
+    # render first. Freezing time.monotonic makes every maybe_render() after
+    # the first look "too soon", so the only way "COMPLETED-04" (the last
+    # case) can appear is via that forced final render.
+    now = [1000.0]
+    monkeypatch.setattr("agent.dashboard.time.monotonic", lambda: now[0])
+
+    s = suite("fast")
+
+    def _make_case(test_id):
+        def case(ctx):
+            ctx.ok(test_id, "fine")
+
+        return case
+
+    for i in range(5):
+        test_id = f"COMPLETED-{i:02d}"
+        s.case(test_id)(_make_case(test_id))
+
+    run_suites([s], results_dir=tmp_path, label="Test Lab", live_progress=True)
+
+    out = capfd.readouterr().out
+    assert "5/5" in out
+    assert "Overall PASS" in out
+
+
 def test_run_suites_registers_and_clears_the_active_dashboard_with_live_progress(tmp_path):
     passing = suite("passing")
 

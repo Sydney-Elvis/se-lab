@@ -298,6 +298,14 @@ def run_suites(
             results.append(result)
     finally:
         if dashboard is not None:
+            # One last unthrottled render before tearing down: maybe_render()
+            # rate-limits mid-run redraws (see LiveDashboard.MIN_RENDER_INTERVAL),
+            # which for a suite of fast, back-to-back passing cases can leave
+            # the box showing a stale "3/9 RUNNING" snapshot from several
+            # results ago as its very last visible state -- confirmed against
+            # a real run. render() always draws immediately, so the box's
+            # last frame before it disappears reflects what actually happened.
+            dashboard.render()
             dashboard.stop()
             common.set_active_dashboard(None)
     return SuitesRunSummary(results=results, failed=failed)
