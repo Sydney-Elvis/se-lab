@@ -77,6 +77,7 @@ class LiveDashboard:
         self.suite_total = suite_total
         self.suite = ""
         self.suite_index = 0
+        self.suites_completed = 0
         self.test_total: int | None = None
         self.test_count = 0
         self.latest_name = "none yet"
@@ -181,6 +182,19 @@ class LiveDashboard:
         self.latest_name = "none yet"
         self.latest_status = "RUNNING"
 
+    def finish_suite(self) -> None:
+        """Mark the current suite as fully done -- called once, after it
+        returns, regardless of pass/fail/setup-error (matches what the
+        Suites bar has always counted: suites moved past, not suites that
+        passed). Without this, the Suites count was inferred as
+        `suite_index - 1` ("suites before the one currently running"), which
+        is accurate mid-run but never reaches suite_total once the *last*
+        suite itself finishes -- there's no next start_suite() call to imply
+        it. Confirmed against a real 22-suite run: the final frame read
+        "Overall PASS" with the Suites bar stuck at 21/22.
+        """
+        self.suites_completed += 1
+
     def record_result(self, *, name: str, status: str, completed: int, failed: bool) -> None:
         self.test_count = completed
         self.latest_name = name
@@ -201,8 +215,19 @@ class LiveDashboard:
         tests_done = bool(self.test_total) and self.test_count >= self.test_total
         return "PASS" if suites_done and tests_done else "RUNNING"
 
+    def _bar_styles(self) -> tuple[str, str]:
+        """(complete_style, finished_style) for both progress bars -- red,
+        once anything has failed, instead of Rich's own default theme
+        colors. Sticky like any_failed itself (see _overall_status()), so a
+        failure several suites back stays visible at a glance even if you're
+        only glancing at the bars, not reading the header text.
+        """
+        if self.any_failed:
+            return "red", "red"
+        return "bar.complete", "bar.finished"
+
     def _plain_summary(self) -> str:
-        completed_suites = self.suite_index - 1
+        completed_suites = self.suites_completed
         overall = self._overall_status()
         elapsed = format_duration(int(time.monotonic() - self.started))
         tests = f"{self.test_count}/{self.test_total}" if self.test_total else str(self.test_count)
@@ -214,7 +239,7 @@ class LiveDashboard:
         )
 
     def _build_renderable(self) -> Panel:
-        completed_suites = min(self.suite_index - 1, self.suite_total) if self.suite_index else 0
+        completed_suites = self.suites_completed
         overall = self._overall_status()
         elapsed = int(time.monotonic() - self.started)
 
@@ -227,9 +252,10 @@ class LiveDashboard:
             (overall, f"bold {_OVERALL_STYLES.get(overall, 'yellow')}"),
         )
 
+        bar_style, finished_style = self._bar_styles()
         progress = Progress(
             TextColumn("{task.fields[row_label]:<7}"),
-            BarColumn(bar_width=None),
+            BarColumn(bar_width=None, complete_style=bar_style, finished_style=finished_style),
             TextColumn("{task.fields[counts]}", justify="right"),
             TextColumn("{task.fields[extra]}"),
             console=self.console,

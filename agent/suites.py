@@ -295,6 +295,8 @@ def run_suites(
                 _emit(f"  Result drift: expected {result.expected} registered cases, recorded {result.actual} outcomes.")
             if context.failed_count or result.drifted or not result.setup_ok:
                 failed = True
+            if dashboard is not None:
+                dashboard.finish_suite()
             results.append(result)
     finally:
         if dashboard is not None:

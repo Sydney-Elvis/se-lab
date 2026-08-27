@@ -477,6 +477,29 @@ def test_run_suites_prints_durable_suite_header_even_with_dashboard_active(tmp_p
     assert "--- Running suite: base-security ---" in out
 
 
+def test_run_suites_final_render_shows_all_suites_complete(tmp_path, capfd):
+    # Regression, confirmed against a real 22-suite run: the final frame used
+    # to read "Overall PASS" with the Suites bar stuck at (total - 1) --
+    # there was no explicit signal that the *last* suite had itself finished,
+    # only that it had started. See LiveDashboard.finish_suite().
+    first = suite("first")
+
+    @first.case("A-01")
+    def a1(ctx):
+        ctx.ok("A-01", "fine")
+
+    second = suite("second")
+
+    @second.case("B-01")
+    def b1(ctx):
+        ctx.ok("B-01", "fine")
+
+    run_suites([first, second], results_dir=tmp_path, label="Test Lab", live_progress=True)
+
+    out = capfd.readouterr().out
+    assert "2/2" in out
+
+
 def test_run_suites_final_render_reflects_true_completion_despite_rate_limiting(tmp_path, capfd, monkeypatch):
     # Regression, confirmed against a real run: LiveDashboard.maybe_render()
     # rate-limits mid-run redraws (MIN_RENDER_INTERVAL), which for a suite of

@@ -62,6 +62,35 @@ def test_mode_autodetects_inplace_or_off(monkeypatch):
     assert LiveDashboard.mode() == "off"
 
 
+def test_suites_completed_reaches_total_only_after_finish_suite_is_called():
+    # Regression, confirmed against a real 22-suite run: completed_suites
+    # used to be inferred as suite_index - 1 ("suites before the one
+    # currently running"), which never reaches suite_total once the *last*
+    # suite itself finishes -- there's no next start_suite() call to imply
+    # it. finish_suite() is the explicit signal instead.
+    dashboard, buffer = _dashboard(suite_total=2)
+    dashboard.start_suite("suite-a", 1, test_total=1)
+    dashboard.record_result(name="A-01", status="pass", completed=1, failed=False)
+    dashboard.render()
+    assert "1/2" not in buffer.getvalue()  # nothing finished yet
+    dashboard.finish_suite()
+
+    dashboard.start_suite("suite-b", 2, test_total=1)
+    dashboard.record_result(name="B-01", status="pass", completed=1, failed=False)
+    dashboard.render()
+    assert "1/2" in buffer.getvalue()  # suite-a finished, suite-b in progress
+    dashboard.finish_suite()
+    dashboard.render()
+    assert "2/2" in buffer.getvalue()  # both suites now finished
+
+
+def test_bar_styles_turn_red_once_anything_has_failed():
+    dashboard, _ = _dashboard()
+    assert dashboard._bar_styles() == ("bar.complete", "bar.finished")
+    dashboard.record_result(name="X", status="fail", completed=1, failed=True)
+    assert dashboard._bar_styles() == ("red", "red")
+
+
 def test_render_shows_label_suite_and_test_state():
     dashboard, buffer = _dashboard()
     dashboard.start_suite("suite-a", 1, test_total=5)
