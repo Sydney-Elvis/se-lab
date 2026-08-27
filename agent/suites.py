@@ -48,7 +48,8 @@ import inspect
 import io
 import itertools
 import sys
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -113,6 +114,13 @@ class SuiteRunResult:
     setup_error: str | None
     expected: int
     actual: int
+    # Populated by run_suites() after run_suite() returns -- run_suite()
+    # itself has no wall-clock timing and only sees the RunContext being
+    # filled in live, not its final passed/failed/skipped breakdown.
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    duration_seconds: float = 0.0
 
     @property
     def drifted(self) -> bool:
@@ -122,6 +130,12 @@ class SuiteRunResult:
         when setup itself failed: an aborted suite is already reported via
         setup_ok/setup_error, not as a count mismatch."""
         return self.setup_ok and self.expected != self.actual
+
+    @property
+    def ok(self) -> bool:
+        """False if anything about this suite is worth flagging in the
+        aggregate summary: a failed case, a setup error, or result drift."""
+        return self.setup_ok and not self.drifted and self.failed == 0
 
 
 def _call_with_matching_kwargs(func: Callable[..., Any], *positional: Any, context: dict[str, Any]) -> Any:
@@ -286,7 +300,15 @@ def run_suites(
                 dashboard.start_suite(target.name, index, test_total=len(target.cases))
                 dashboard.render()
             context = RunContext(target.name, dashboard=dashboard)
+            suite_started = time.monotonic()
             result = run_suite(target, context, **base_context)
+            result = replace(
+                result,
+                passed=context.passed_count,
+                failed=context.failed_count,
+                skipped=context.skipped_count,
+                duration_seconds=time.monotonic() - suite_started,
+            )
             context.print_summary()
             context.write_json(results_dir / f"results-{target.name}.json")
             if not result.setup_ok:
@@ -310,7 +332,39 @@ def run_suites(
             dashboard.render()
             dashboard.stop()
             common.set_active_dashboard(None)
+    if results:
+        # Printed after the dashboard is already stopped, as plain text --
+        # by this point there's no live footer left to coordinate with, and
+        # this block is meant to read as a normal, static final report (the
+        # same shape scripts/run_integration_tests.py's legacy summary had),
+        # not another line racing the box.
+        print(_format_run_summary(label, results, failed), flush=True)
     return SuitesRunSummary(results=results, failed=failed)
+
+
+def _format_run_summary(label: str, results: list[SuiteRunResult], failed: bool) -> str:
+    title = f"{label.upper()} SUMMARY"
+    rule = "=" * max(len(title), 60)
+    name_width = max(len(r.suite_name) for r in results)
+    lines = [rule, title, rule]
+    total_passed = total_failed = total_skipped = 0
+    for r in results:
+        status = "PASS" if r.ok else "FAIL"
+        suite_total = r.passed + r.failed + r.skipped
+        total_passed += r.passed
+        total_failed += r.failed
+        total_skipped += r.skipped
+        lines.append(
+            f"  [{status:<4}] {r.suite_name:<{name_width}}  "
+            f"{r.passed}/{suite_total} passed, {r.failed} failed, {r.skipped} skipped  "
+            f"({common.format_duration(int(r.duration_seconds))})"
+        )
+    lines.append(rule)
+    grand_total = total_passed + total_failed + total_skipped
+    lines.append(f"Total: {total_passed}/{grand_total} passed, {total_failed} failed, {total_skipped} skipped")
+    lines.append("")
+    lines.append("All suites passed." if not failed else "Some suites failed.")
+    return "\n".join(lines)
 
 
 def _import_module_from_path(path: Path):

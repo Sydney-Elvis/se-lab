@@ -432,6 +432,74 @@ def test_run_suites_writes_one_result_json_per_suite_and_reports_no_failure(tmp_
     assert (tmp_path / "results-also-passing.json").exists()
 
 
+def test_run_suites_populates_passed_failed_skipped_and_duration_per_suite(tmp_path):
+    s = suite("mixed")
+
+    @s.case("M-01")
+    def m1(ctx):
+        ctx.ok("M-01", "fine")
+
+    @s.case("M-02")
+    def m2(ctx):
+        ctx.fail("M-02", "broke")
+
+    @s.case("M-03")
+    def m3(ctx):
+        ctx.skip("M-03", "n/a")
+
+    summary = run_suites([s], results_dir=tmp_path)
+
+    result = summary.results[0]
+    assert result.passed == 1
+    assert result.failed == 1
+    assert result.skipped == 1
+    assert result.ok is False
+    assert result.duration_seconds >= 0.0
+
+
+def test_run_suites_prints_an_aggregate_summary_with_totals_and_durations(tmp_path, capsys):
+    passing = suite("passing")
+
+    @passing.case("P-01")
+    def p1(ctx):
+        ctx.ok("P-01", "fine")
+
+    broken = suite("broken")
+
+    @broken.case("B-01")
+    def b1(ctx):
+        ctx.fail("B-01", "nope")
+
+    run_suites([passing, broken], results_dir=tmp_path, label="Test Lab")
+
+    out = capsys.readouterr().out
+    assert "TEST LAB SUMMARY" in out
+    assert "[PASS] passing" in out
+    assert "1/1 passed, 0 failed, 0 skipped" in out
+    assert "[FAIL] broken " in out  # padded to align with "passing"
+    assert "0/1 passed, 1 failed, 0 skipped" in out
+    assert "Total: 1/2 passed, 1 failed, 0 skipped" in out
+    assert "Some suites failed." in out
+
+
+def test_run_suites_aggregate_summary_reports_all_passed_when_nothing_failed(tmp_path, capsys):
+    passing = suite("passing")
+
+    @passing.case("P-01")
+    def p1(ctx):
+        ctx.ok("P-01", "fine")
+
+    run_suites([passing], results_dir=tmp_path, label="Test Lab")
+
+    assert "All suites passed." in capsys.readouterr().out
+
+
+def test_run_suites_prints_no_aggregate_summary_when_there_are_no_suites(tmp_path, capsys):
+    run_suites([], results_dir=tmp_path, label="Test Lab")
+    out = capsys.readouterr().out
+    assert "SUMMARY" not in out
+
+
 def test_run_suites_with_live_progress_forced_on_still_produces_correct_results(tmp_path, capfd):
     # capfd, not capsys: dashboard/result output goes via sys.__stdout__
     # deliberately (see agent/dashboard.py, agent/results.py), which capsys
