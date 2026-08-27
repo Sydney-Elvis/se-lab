@@ -457,6 +457,25 @@ def test_run_suites_with_live_progress_forced_on_still_produces_correct_results(
     assert "[FAIL] B-01: nope" in out
 
 
+def test_run_suites_prints_durable_suite_header_even_with_dashboard_active(tmp_path, capfd):
+    # Regression test: previously the "--- Running suite ---" header only
+    # printed when there was no dashboard -- with one active, the suite name
+    # only ever existed inside the transient in-place block. A suite whose
+    # own setup hangs or dies before any case records a result (e.g. a
+    # scenario's compose up) left scrollback with zero trace of which suite
+    # was even attempted. See agent/suites.py's run_suites().
+    target = suite("base-security")
+
+    @target.case("SEC-01")
+    def case(ctx):
+        ctx.ok("SEC-01", "fine")
+
+    run_suites([target], results_dir=tmp_path, label="Test Lab", live_progress=True)
+
+    out = capfd.readouterr().out
+    assert "--- Running suite: base-security ---" in out
+
+
 def test_run_suites_registers_and_clears_the_active_dashboard_with_live_progress(tmp_path):
     passing = suite("passing")
 

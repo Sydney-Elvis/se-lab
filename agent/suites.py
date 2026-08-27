@@ -266,11 +266,20 @@ def run_suites(
     failed = False
     try:
         for index, target in enumerate(suites, start=1):
+            # Durable even with a dashboard active: printed straight to
+            # sys.__stdout__, same as RunContext._record()/print_summary(),
+            # so scrollback/log capture always has a permanent trace of
+            # which suite was attempted -- not just the in-place block --
+            # if the suite dies before recording a single result (e.g. its
+            # scenario's own compose up fails or hangs before any case runs,
+            # which the in-place-only version left with zero trace of what
+            # was even in flight).
+            if dashboard is not None:
+                dashboard.clear()
+            print(f"\n--- Running suite: {target.name} ---", flush=True, file=sys.__stdout__)
             if dashboard is not None:
                 dashboard.start_suite(target.name, index, test_total=len(target.cases))
                 dashboard.render()
-            else:
-                print(f"\n--- Running suite: {target.name} ---", flush=True)
             context = RunContext(target.name, dashboard=dashboard)
             result = run_suite(target, context, **base_context)
             context.print_summary()
