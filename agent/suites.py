@@ -75,6 +75,13 @@ class Suite:
     name: str
     group: str = "core"
     order: int = 100
+    # Compose profile(s) this suite's own scenario factory needs beyond
+    # `base`, independent of `group` -- `group` is purely a `--test-group`
+    # selection label. Lets a suite stay selected by a coarse group (e.g.
+    # "base", so it runs in the default sweep) while still getting its own
+    # isolated scenario bucket wired to a real destination, without folding
+    # into -- and disturbing -- whatever other suites share that group.
+    extra_profiles: tuple[str, ...] = ()
     cases: list[Case] = field(default_factory=list)
     setup_fn: SetupFunc | None = None
     teardown_fn: TeardownFunc | None = None
@@ -103,8 +110,10 @@ class Suite:
         return func
 
 
-def suite(name: str, *, group: str = "core", order: int = 100) -> Suite:
-    return Suite(name=name, group=group, order=order)
+def suite(
+    name: str, *, group: str = "core", order: int = 100, extra_profiles: tuple[str, ...] = ()
+) -> Suite:
+    return Suite(name=name, group=group, order=order, extra_profiles=extra_profiles)
 
 
 @dataclass(slots=True)
@@ -453,6 +462,7 @@ def select_suites(
                     name=candidate.name,
                     group=candidate.group,
                     order=candidate.order,
+                    extra_profiles=candidate.extra_profiles,
                     cases=matching,
                     setup_fn=candidate.setup_fn,
                     teardown_fn=candidate.teardown_fn,
