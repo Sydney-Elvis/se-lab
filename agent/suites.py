@@ -218,6 +218,13 @@ def run_suite(target: Suite, ctx: RunContext, **base_context: Any) -> SuiteRunRe
         for case in target.cases:
             buffer = io.StringIO() if dashboard is not None else None
             before = len(ctx.results)
+            if dashboard is not None:
+                # Unthrottled render (not maybe_render()): this is a state
+                # transition worth always showing immediately, the same way
+                # a failure always forces a render -- see start_case()'s own
+                # docstring for why the footer needs this at all.
+                dashboard.start_case(case.test_id)
+                dashboard.render()
             try:
                 with _capture(buffer):
                     _call_with_matching_kwargs(case.func, ctx, context=context)
