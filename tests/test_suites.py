@@ -354,6 +354,19 @@ def test_suites_in_group_filters_and_all_bypasses():
     assert [s.name for s in suites_in_group(suites, "all")] == ["a", "b", "c"]
 
 
+def test_suites_in_group_accepts_comma_separated_groups():
+    suites = [
+        Suite(name="a", group="core"),
+        Suite(name="b", group="stream-hardening"),
+        Suite(name="c", group="unrelated"),
+    ]
+    assert [s.name for s in suites_in_group(suites, "core,stream-hardening")] == ["a", "b"]
+    # "all" wins even if listed alongside other names.
+    assert [s.name for s in suites_in_group(suites, "core,all")] == ["a", "b", "c"]
+    # Stray whitespace/empty segments are tolerated.
+    assert [s.name for s in suites_in_group(suites, " core , stream-hardening ,")] == ["a", "b"]
+
+
 def _selectable_suites() -> list[Suite]:
     core_a = Suite(name="core-a", group="core", cases=[Case("CA-01", lambda ctx: None), Case("CA-02", lambda ctx: None)])
     core_b = Suite(name="core-b", group="core", cases=[Case("CB-01", lambda ctx: None)])
@@ -374,6 +387,16 @@ def test_select_suites_by_group():
 def test_select_suites_by_only_selects_a_single_named_suite():
     suites = _selectable_suites()
     assert [s.name for s in select_suites(suites, only="core-b")] == ["core-b"]
+
+
+def test_select_suites_by_only_accepts_comma_separated_names():
+    suites = _selectable_suites()
+    assert [s.name for s in select_suites(suites, only="core-b,stream")] == ["core-b", "stream"]
+
+
+def test_select_suites_by_group_accepts_comma_separated_groups():
+    suites = _selectable_suites()
+    assert [s.name for s in select_suites(suites, group="core,stream-hardening")] == ["core-a", "core-b", "stream"]
 
 
 def test_select_suites_by_only_unknown_name_raises_with_available_list():

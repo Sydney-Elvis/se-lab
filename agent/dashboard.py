@@ -84,6 +84,16 @@ class LiveDashboard:
         self.latest_status = "RUNNING"
         self.any_failed = False
         self.started = time.monotonic()
+        # Tracks the case currently in flight, separately from latest_name/
+        # latest_status (which only ever reflect the last *completed* case --
+        # see record_result()). Without this, "Elapsed" only ever showed
+        # whole-run time and "Last test" only ever showed the previous
+        # result, so a case genuinely stuck mid-scenario (waiting on a
+        # container, a subprocess) looked identical on screen to one still
+        # making normal progress -- confirmed confusing for real against a
+        # ~30-minute multi-suite run. See start_case()/record_result().
+        self.current_case: str | None = None
+        self.current_case_started: float | None = None
         self.rendered = False
         self._last_render_at = 0.0
         # See mode()'s docstring: an append-only durable line per render()
@@ -181,6 +191,16 @@ class LiveDashboard:
         self.test_count = 0
         self.latest_name = "none yet"
         self.latest_status = "RUNNING"
+        self.current_case = None
+        self.current_case_started = None
+
+    def start_case(self, name: str) -> None:
+        """Called right before a case's own function runs -- see run_suite()
+        in agent/suites.py. Cleared by record_result() once that same case
+        finishes (pass/fail/skip all call it via RunContext), so at most one
+        of current_case/latest_name is ever the "active" line in the footer."""
+        self.current_case = name
+        self.current_case_started = time.monotonic()
 
     def finish_suite(self) -> None:
         """Mark the current suite as fully done -- called once, after it
@@ -201,6 +221,12 @@ class LiveDashboard:
         self.latest_status = status.upper()
         if failed:
             self.any_failed = True
+        # This case is no longer "in flight" -- only clear it if it's the
+        # same one start_case() marked running (a defensive check, not
+        # expected to matter in practice since cases run one at a time).
+        if self.current_case == name:
+            self.current_case = None
+            self.current_case_started = None
 
     def _overall_status(self) -> str:
         """FAIL as soon as anything has -- otherwise RUNNING until the very
@@ -226,16 +252,27 @@ class LiveDashboard:
             return "red", "red"
         return "bar.complete", "bar.finished"
 
+    def _current_case_text(self) -> str:
+        """'Running: <id> (Xs)' while a case is in flight, else the last
+        completed result -- see start_case()/record_result(). The (Xs) is
+        this case's own elapsed time, not the whole run's, so it actually
+        moves independently and a stall becomes visible at a glance."""
+        if self.current_case is not None and self.current_case_started is not None:
+            case_elapsed = format_duration(int(time.monotonic() - self.current_case_started))
+            return f"Running: {self.current_case} ({case_elapsed})"
+        if self.latest_name == "none yet":
+            return "Last test: none yet"
+        return f"Last test: [{self.latest_status}] {self.latest_name}"
+
     def _plain_summary(self) -> str:
         completed_suites = self.suites_completed
         overall = self._overall_status()
         elapsed = format_duration(int(time.monotonic() - self.started))
         tests = f"{self.test_count}/{self.test_total}" if self.test_total else str(self.test_count)
-        last = f"[{self.latest_status}] {self.latest_name}" if self.latest_name != "none yet" else "none yet"
         return (
             f"  ===> {self.label} | Overall {overall} | "
             f"Suites {completed_suites}/{self.suite_total} (current: {self.suite or 'starting'}) | "
-            f"Tests {tests} | Elapsed {elapsed} | Last: {last}"
+            f"Tests {tests} | Elapsed {elapsed} | {self._current_case_text()}"
         )
 
     def _build_renderable(self) -> Panel:
@@ -278,7 +315,14 @@ class LiveDashboard:
             extra=f"Elapsed: {format_duration(elapsed)}",
         )
 
-        if self.latest_name == "none yet":
+        if self.current_case is not None and self.current_case_started is not None:
+            case_elapsed = format_duration(int(time.monotonic() - self.current_case_started))
+            current_case_name = _truncate(self.current_case, name_budget)
+            last_line = Text.assemble(
+                ("Running: ", "bold yellow"),
+                f"{current_case_name} ({case_elapsed})",
+            )
+        elif self.latest_name == "none yet":
             last_line = Text("Last test: none yet")
         else:
             last_line = Text.assemble(

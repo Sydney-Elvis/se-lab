@@ -75,6 +75,13 @@ class Suite:
     name: str
     group: str = "core"
     order: int = 100
+    # Compose profile(s) this suite's own scenario factory needs beyond
+    # `base`, independent of `group` -- `group` is purely a `--test-group`
+    # selection label. Lets a suite stay selected by a coarse group (e.g.
+    # "base", so it runs in the default sweep) while still getting its own
+    # isolated scenario bucket wired to a real destination, without folding
+    # into -- and disturbing -- whatever other suites share that group.
+    extra_profiles: tuple[str, ...] = ()
     cases: list[Case] = field(default_factory=list)
     setup_fn: SetupFunc | None = None
     teardown_fn: TeardownFunc | None = None
@@ -103,8 +110,10 @@ class Suite:
         return func
 
 
-def suite(name: str, *, group: str = "core", order: int = 100) -> Suite:
-    return Suite(name=name, group=group, order=order)
+def suite(
+    name: str, *, group: str = "core", order: int = 100, extra_profiles: tuple[str, ...] = ()
+) -> Suite:
+    return Suite(name=name, group=group, order=order, extra_profiles=extra_profiles)
 
 
 @dataclass(slots=True)
@@ -209,6 +218,13 @@ def run_suite(target: Suite, ctx: RunContext, **base_context: Any) -> SuiteRunRe
         for case in target.cases:
             buffer = io.StringIO() if dashboard is not None else None
             before = len(ctx.results)
+            if dashboard is not None:
+                # Unthrottled render (not maybe_render()): this is a state
+                # transition worth always showing immediately, the same way
+                # a failure always forces a render -- see start_case()'s own
+                # docstring for why the footer needs this at all.
+                dashboard.start_case(case.test_id)
+                dashboard.render()
             try:
                 with _capture(buffer):
                     _call_with_matching_kwargs(case.func, ctx, context=context)
@@ -404,9 +420,16 @@ def discover_suites(tests_dir: Path) -> list[Suite]:
 
 
 def suites_in_group(suites: list[Suite], group: str) -> list[Suite]:
-    if group == "all":
+    """`group` is one group name, or several comma-separated ones (e.g.
+    "cwa-local,abs") -- every suite whose own group matches any of them.
+    "all" wins outright if it's present anywhere in the list, same as it
+    always has as a single value. Restores a legacy m3undle-lab capability
+    (`--only a,b`) that `select_suites()`'s single-value design had dropped
+    when it replaced each product lab's own hand-rolled selector."""
+    requested = {value.strip() for value in group.split(",") if value.strip()}
+    if "all" in requested:
         return list(suites)
-    return [s for s in suites if s.group == group]
+    return [s for s in suites if s.group in requested]
 
 
 def select_suites(
@@ -431,10 +454,13 @@ def select_suites(
     since by the time it's called only one should ever be set.
     """
     if only:
-        selected = [s for s in suites if s.name == only]
+        # Comma-separated too, same as suites_in_group()'s `group` -- e.g.
+        # `only="cwa-local,abs"` runs exactly those two named suites.
+        requested = {value.strip() for value in only.split(",") if value.strip()}
+        selected = [s for s in suites if s.name in requested]
         if not selected:
             available = ", ".join(s.name for s in suites) or "(none)"
-            raise SystemExit(f"Unknown suite {only!r}. Available: {available}")
+            raise SystemExit(f"Unknown suite(s) {only!r}. Available: {available}")
     else:
         target_group = group or "all"
         selected = suites_in_group(suites, target_group)
@@ -453,6 +479,7 @@ def select_suites(
                     name=candidate.name,
                     group=candidate.group,
                     order=candidate.order,
+                    extra_profiles=candidate.extra_profiles,
                     cases=matching,
                     setup_fn=candidate.setup_fn,
                     teardown_fn=candidate.teardown_fn,
