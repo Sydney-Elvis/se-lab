@@ -90,11 +90,22 @@ class MyProductAnalysis(AnalysisPlugin):
 
 Generic Docker Compose lifecycle utilities — call these from your own registered commands, don't
 reimplement `docker compose` calls by hand:
-- `compose_command()`, `compose_up()`, `compose_up_only()`, `compose_down()`, `compose_ps()`,
-  `compose_logs()` — Compose up/down/status/log capture, with `extra_compose_files=` for
-  scenario-specific overrides layered on your base compose file
+- `compose_command()`, `compose_up()`, `compose_up_only()`, `compose_up_service()`,
+  `compose_down()`, `compose_ps()`, `compose_logs()` — Compose up/down/status/log capture, with
+  `extra_compose_files=` for scenario-specific overrides layered on your base compose file.
+  `compose_up()` is a full-stack `down --remove-orphans` then `up -d --remove-orphans` — every
+  service restarts, siblings included. `compose_up_service(service)` instead restarts just that
+  one named service via `up -d --no-deps`, leaving everything else already running untouched.
+- `deploy_branch()`, `deploy_source_tag()`, `deploy_current_branch()`, `deploy_tag()` — checkout
+  (or pull)/build/`sync_runtime_compose()`/record deployment metadata/bring up, in one call. Each
+  takes `extra_compose_files=`; `deploy_current_branch()` additionally takes `service=` — pass
+  your product's own compose service name and it calls `compose_up_service()` instead of
+  `compose_up()`, so a product lab's `up --refresh` (pick up the latest commit on the current
+  branch without restarting client apps or shared sidecars a manual test session may have state
+  parked in) is one line: `lab_common.deploy_current_branch(extra_compose_files=[...],
+  service=SERVICE)`. Omit `service` for the old full-stack-restart behavior.
 - `published_ports()` / `print_published_ports()` — host ports currently published by this
-  project's containers, read from `compose ps --format json`. Every `deploy_*()` helper below
+  project's containers, read from `compose ps --format json`. Every `deploy_*()` helper above
   prints this right after bringing the stack up, so `./lab up` always ends with a list of what's
   actually reachable instead of just "deployed."
 - Environment loading from `lab.env`

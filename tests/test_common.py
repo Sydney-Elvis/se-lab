@@ -149,7 +149,8 @@ def _stub_deploy_internals(monkeypatch):
     monkeypatch.setattr(lab_common, "sync_runtime_compose", lambda: None)
     monkeypatch.setattr(lab_common, "set_deployment_metadata", lambda *a, **kw: None)
     calls: list[tuple] = []
-    monkeypatch.setattr(lab_common, "compose_up", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(lab_common, "compose_up", lambda **kw: calls.append(("compose_up", kw)))
+    monkeypatch.setattr(lab_common, "compose_up_service", lambda service, **kw: calls.append(("compose_up_service", service, kw)))
     monkeypatch.setattr(lab_common, "print_published_ports", lambda: None)
     monkeypatch.setenv("SELFTEST_REPO_URL", "https://example.invalid/repo.git")
     monkeypatch.setenv("SELFTEST_GHCR_IMAGE", "ghcr.example.invalid/selftest")
@@ -162,7 +163,7 @@ def test_deploy_branch_threads_extra_compose_files_to_compose_up(monkeypatch):
     calls = _stub_deploy_internals(monkeypatch)
     extra = [Path("/tmp/override.yaml")]
     lab_common.deploy_branch("main", extra_compose_files=extra)
-    assert calls == [{"extra_compose_files": extra}]
+    assert calls == [("compose_up", {"extra_compose_files": extra})]
 
 
 def test_deploy_source_tag_threads_extra_compose_files_to_compose_up(monkeypatch):
@@ -171,7 +172,7 @@ def test_deploy_source_tag_threads_extra_compose_files_to_compose_up(monkeypatch
     calls = _stub_deploy_internals(monkeypatch)
     extra = [Path("/tmp/override.yaml")]
     lab_common.deploy_source_tag("v1.0.0", extra_compose_files=extra)
-    assert calls == [{"extra_compose_files": extra}]
+    assert calls == [("compose_up", {"extra_compose_files": extra})]
 
 
 def test_deploy_tag_threads_extra_compose_files_to_compose_up(monkeypatch):
@@ -180,13 +181,29 @@ def test_deploy_tag_threads_extra_compose_files_to_compose_up(monkeypatch):
     calls = _stub_deploy_internals(monkeypatch)
     extra = [Path("/tmp/override.yaml")]
     lab_common.deploy_tag("v1.0.0", extra_compose_files=extra)
-    assert calls == [{"extra_compose_files": extra}]
+    assert calls == [("compose_up", {"extra_compose_files": extra})]
 
 
 def test_deploy_functions_default_extra_compose_files_to_empty(monkeypatch):
     calls = _stub_deploy_internals(monkeypatch)
     lab_common.deploy_branch("main")
-    assert calls == [{"extra_compose_files": ()}]
+    assert calls == [("compose_up", {"extra_compose_files": ()})]
+
+
+def test_deploy_current_branch_defaults_to_full_stack_compose_up(monkeypatch):
+    calls = _stub_deploy_internals(monkeypatch)
+    branch, image = lab_common.deploy_current_branch()
+    assert branch == "main"
+    assert calls == [("compose_up", {"extra_compose_files": ()})]
+
+
+def test_deploy_current_branch_with_service_restarts_only_that_service(monkeypatch):
+    from pathlib import Path
+
+    calls = _stub_deploy_internals(monkeypatch)
+    extra = [Path("/tmp/override.yaml")]
+    lab_common.deploy_current_branch(service="selftest", extra_compose_files=extra)
+    assert calls == [("compose_up_service", "selftest", {"extra_compose_files": extra})]
 
 
 def test_git_repo_primitives_against_a_real_repo(tmp_path):

@@ -1253,7 +1253,22 @@ def deploy_source_tag(tag: str, repo_url: str | None = None, *, extra_compose_fi
     return image
 
 
-def deploy_current_branch(repo_url: str | None = None, *, extra_compose_files: Sequence[Path] = ()) -> tuple[str, str]:
+def deploy_current_branch(
+    repo_url: str | None = None,
+    *,
+    extra_compose_files: Sequence[Path] = (),
+    service: str | None = None,
+) -> tuple[str, str]:
+    """Refresh the current checkout's branch, rebuild its image, and bring it up.
+
+    By default this recreates the whole stack via compose_up() (down then up
+    -- every service restarts, siblings included). Pass `service` -- the
+    product's own compose service name -- to restart only that one container
+    instead, via compose_up_service(): the shape a product lab's `up
+    --refresh` wants, so picking up the latest commit on the current branch
+    doesn't also bounce client apps or shared sidecars a manual test session
+    may have state parked in.
+    """
     resolved_repo_url = resolve_setting(_repo_url_env_key(), explicit=repo_url, required=True)
     ensure_repo_checkout(resolved_repo_url)
     print_repo_summary(resolved_repo_url)
@@ -1263,7 +1278,10 @@ def deploy_current_branch(repo_url: str | None = None, *, extra_compose_files: S
     docker_build(image, repo_dir(), source_revision=commit)
     sync_runtime_compose()
     set_deployment_metadata("branch", branch, image=image, source_commit=commit)
-    compose_up(extra_compose_files=extra_compose_files)
+    if service is not None:
+        compose_up_service(service, extra_compose_files=extra_compose_files)
+    else:
+        compose_up(extra_compose_files=extra_compose_files)
     print_published_ports()
     print(f"Current checkout branch '{branch}' is deployed.", flush=True)
     return branch, image
@@ -1316,9 +1334,9 @@ def get_image_repo_digest(image: str) -> str | None:
     return result.stdout.strip() or None
 
 
-def compose_up_service(service: str) -> None:
+def compose_up_service(service: str, *, extra_compose_files: Sequence[Path] = ()) -> None:
     """Restart just one compose service, without touching any others already running."""
-    run(compose_command("up", "-d", "--no-deps", service))
+    run(compose_command("up", "-d", "--no-deps", service, extra_compose_files=extra_compose_files))
 
 
 def _client_version_history_path() -> Path:
