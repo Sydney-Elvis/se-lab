@@ -124,6 +124,27 @@ def test_resolve_setting_precedence(monkeypatch, scratch_root):
     assert lab_common.resolve_setting("PROBE_SETTING", explicit="from-arg") == "from-arg"
 
 
+def test_external_url_uses_generic_hosted_link_setting(monkeypatch):
+    monkeypatch.setenv("LAB_EXTERNAL_HOST", "toontown-int-srv2")
+    assert lab_common.external_url(18378) == "http://toontown-int-srv2:18378"
+    assert lab_common.external_url(443, scheme="https", path="login") == "https://toontown-int-srv2:443/login"
+
+
+def test_print_connection_info_includes_credentials_and_note(monkeypatch, capsys):
+    monkeypatch.setenv("LAB_EXTERNAL_HOST", "toontown-int-srv2")
+    lab_common.print_connection_info(
+        [
+            lab_common.ConnectionInfo(
+                "Example app", 18080, credentials="user: admin / password: test", note="already configured"
+            )
+        ]
+    )
+    assert capsys.readouterr().out == (
+        "  Example app: http://toontown-int-srv2:18080  "
+        "(user: admin / password: test / already configured)\n"
+    )
+
+
 def test_settings_passphrase_reads_env_prefixed_key(monkeypatch):
     monkeypatch.delenv("SELFTEST_SETTINGS_PASSPHRASE", raising=False)
     with pytest.raises(SystemExit, match="Missing required setting SELFTEST_SETTINGS_PASSPHRASE"):

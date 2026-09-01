@@ -36,6 +36,7 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator, Sequence
@@ -56,6 +57,7 @@ SE_LAB_DIR = Path(__file__).resolve().parent.parent
 
 RESULTS_DIR_ENV = "LAB_RESULTS_DIR"
 ARTIFACTS_DIR_ENV = "LAB_ARTIFACTS_DIR"
+EXTERNAL_HOST_ENV = "LAB_EXTERNAL_HOST"
 
 DEPLOYMENT_METADATA_KEYS = (
     "LAB_DEPLOY_SOURCE_TYPE",
@@ -114,6 +116,61 @@ def _settings_passphrase_env_key() -> str:
 # ---------------------------------------------------------------------------
 # formatting / progress
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionInfo:
+    """One user-facing HTTP entry point contributed by a product lab.
+
+    se-lab owns the common hosted-URL setting and terminal rendering; product
+    labs own their application names, ports, credentials, and whether a
+    profile is currently running.
+    """
+
+    name: str
+    port: int
+    credentials: str | None = None
+    note: str | None = None
+    path: str = ""
+    scheme: str = "http"
+
+
+def external_host() -> str:
+    """Hostname/IP used in user-facing links, separate from local probes.
+
+    ``LAB_EXTERNAL_HOST`` is intentionally generic so every product lab gets
+    the same hosted-link behavior.  It does not alter Docker bindings or
+    localhost readiness checks; it only changes the links printed for people
+    to open from another machine.
+    """
+    host = resolve_setting(EXTERNAL_HOST_ENV, default="127.0.0.1") or "127.0.0.1"
+    if "://" in host or "/" in host or "@" in host or any(char.isspace() for char in host):
+        raise SystemExit(f"{EXTERNAL_HOST_ENV} must be a hostname or IP address, without a URL scheme or path.")
+    return host
+
+
+def external_url(port: int, *, scheme: str = "http", path: str = "") -> str:
+    """Build a hosted URL for a published HTTP(S) port."""
+    if not 1 <= port <= 65535:
+        raise ValueError("port must be between 1 and 65535")
+    if scheme not in {"http", "https"}:
+        raise ValueError("scheme must be http or https")
+    host = external_host()
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        host = f"[{host}]"
+    normalized_path = f"/{path.lstrip('/')}" if path else ""
+    return f"{scheme}://{host}:{port}{normalized_path}"
+
+
+def print_connection_info(connections: Sequence[ConnectionInfo]) -> None:
+    """Print the product-declared manual-testing entry points."""
+    for connection in connections:
+        details = " / ".join(part for part in (connection.credentials, connection.note) if part)
+        suffix = f"  ({details})" if details else ""
+        print(
+            f"  {connection.name}: {external_url(connection.port, scheme=connection.scheme, path=connection.path)}{suffix}",
+            flush=True,
+        )
 
 
 def format_duration(seconds: float | int | None) -> str:

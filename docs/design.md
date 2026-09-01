@@ -108,6 +108,10 @@ reimplement `docker compose` calls by hand:
   project's containers, read from `compose ps --format json`. Every `deploy_*()` helper above
   prints this right after bringing the stack up, so `./lab up` always ends with a list of what's
   actually reachable instead of just "deployed."
+- `ConnectionInfo` / `print_connection_info()` — product commands declare their active manual
+  entry points (name, port, optional credentials/note); se-lab renders the URL using the shared
+  `LAB_EXTERNAL_HOST` setting. This is presentation only: application probes keep using their
+  product-specific local targets, so a hosted link cannot accidentally redirect test traffic.
 - Environment loading from `lab.env`
 - Deployment metadata (image digest, timestamp, branch)
 
