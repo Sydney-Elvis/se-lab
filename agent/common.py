@@ -899,6 +899,72 @@ def compose_down() -> None:
     run(compose_command("down", "--remove-orphans"))
 
 
+def compose_ls_project_names() -> list[str]:
+    """Every Compose project name Docker currently knows about (running or
+    stopped), via `docker compose ls --all`. Used to find projects by name
+    rather than through compose_command()'s fixed single-project assumption
+    -- see compose_down_all()."""
+    base = detect_compose_base_command()
+    result = run_capture([*base, "ls", "--all", "--format", "json"], check=False)
+    if result.returncode:
+        raise SystemExit(f"Could not list Compose projects: {result.stderr.strip()}")
+    try:
+        projects = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"Could not parse `docker compose ls` output: {error}") from error
+    return sorted(
+        {
+            project["Name"]
+            for project in projects
+            if isinstance(project, dict) and project.get("Name")
+        }
+    )
+
+
+def compose_down_all(*, remove_volumes: bool = False) -> list[str]:
+    """Tear down every Compose project belonging to this product lab: the
+    main `up` stack plus any scenario-run or leftover project (matched as
+    project_name() itself, or project_name() + "-<suffix>") Docker still
+    knows about, regardless of profile or how each was started.
+
+    `remove_volumes=False` by default, same as plain `docker compose down`
+    -- named volumes (a Postgres data dir, say) survive. Pass True (`lab
+    down --clean-volumes`) to actually reclaim them; making that opt-in
+    rather than the default avoids a routine "stop everything" turning into
+    a surprise data wipe.
+
+    Ported from family-librarian-lab's own ad hoc `_down_all_projects()`
+    (audit found every product lab needs this, not just one) -- generalized
+    off project_name() instead of a hardcoded prefix constant. The prefix
+    match requires an exact name or a "-" boundary so an unrelated project
+    that merely starts with the same characters (e.g. a developer's own
+    non-lab stack for the same product) isn't swept in too.
+
+    Torn down by project name alone, without `-f`/a compose file: `down`
+    resolves the containers/networks(/volumes, when asked) to remove from
+    the project label Docker already carries on them, not by re-reading the
+    compose file that created them -- the only thing that has to still be
+    right is the name.
+    """
+    prefix = project_name()
+    names = [name for name in compose_ls_project_names() if name == prefix or name.startswith(f"{prefix}-")]
+    if not names:
+        return []
+    base = detect_compose_base_command()
+    failures: list[str] = []
+    for name in names:
+        print(f"Tearing down {name}...", flush=True)
+        command = [*base, "-p", name, "down", "--remove-orphans"]
+        if remove_volumes:
+            command.append("--volumes")
+        result = run(command, check=False)
+        if result.returncode:
+            failures.append(name)
+    if failures:
+        raise SystemExit(f"Failed to tear down: {', '.join(failures)} -- see output above.")
+    return names
+
+
 def compose_ps() -> None:
     run(compose_command("ps"))
 

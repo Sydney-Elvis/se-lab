@@ -421,9 +421,10 @@ def test_run_lock_reclaims_a_stale_lock_from_a_dead_pid(monkeypatch, tmp_path):
 
 
 class _FakeCompletedProcess:
-    def __init__(self, returncode: int, stdout: str):
+    def __init__(self, returncode: int, stdout: str, stderr: str = ""):
         self.returncode = returncode
         self.stdout = stdout
+        self.stderr = stderr
 
 
 def test_parse_compose_ps_json_handles_array_shape():
@@ -473,6 +474,77 @@ def test_published_ports_empty_when_compose_ps_fails(monkeypatch):
     monkeypatch.setattr(lab_common, "compose_command", lambda *a, **kw: ["docker", "compose", "ps"])
     monkeypatch.setattr(lab_common, "run_capture", lambda cmd, **kw: _FakeCompletedProcess(1, ""))
     assert lab_common.published_ports() == []
+
+
+def test_compose_ls_project_names_parses_and_dedupes(monkeypatch):
+    payload = json.dumps([
+        {"Name": "selftest-lab"},
+        {"Name": "selftest-lab-scenario-1"},
+        {"Name": "selftest-lab"},
+    ])
+    monkeypatch.setattr(lab_common, "run_capture", lambda cmd, **kw: _FakeCompletedProcess(0, payload))
+    assert lab_common.compose_ls_project_names() == ["selftest-lab", "selftest-lab-scenario-1"]
+
+
+def test_compose_ls_project_names_raises_when_docker_compose_ls_fails(monkeypatch):
+    monkeypatch.setattr(lab_common, "run_capture", lambda cmd, **kw: _FakeCompletedProcess(1, "", "daemon not running"))
+    with pytest.raises(SystemExit, match="Could not list Compose projects"):
+        lab_common.compose_ls_project_names()
+
+
+def test_compose_down_all_sweeps_only_prefix_matching_projects(monkeypatch):
+    # "selftest-lab" (this product's own name via conftest's product config),
+    # "selftest-lab-scenario" (a leftover scenario-run project), and a
+    # same-prefixed-but-unrelated "selftest-lab-other-dev-stack" project must
+    # all match -- but "selftest-lab-debug"'s sibling-looking near miss
+    # "selftest-labyrinth" must not (no "-" boundary after the shared prefix).
+    monkeypatch.setattr(
+        lab_common,
+        "compose_ls_project_names",
+        lambda: ["selftest-lab", "selftest-lab-scenario", "selftest-labyrinth", "unrelated-project"],
+    )
+    torn_down = []
+    monkeypatch.setattr(lab_common, "detect_compose_base_command", lambda: ["docker", "compose"])
+
+    def fake_run(cmd, **kw):
+        torn_down.append(cmd)
+        return _FakeCompletedProcess(0, "")
+
+    monkeypatch.setattr(lab_common, "run", fake_run)
+    names = lab_common.compose_down_all()
+    assert names == ["selftest-lab", "selftest-lab-scenario"]
+    assert [cmd[3] for cmd in torn_down] == ["selftest-lab", "selftest-lab-scenario"]
+    # Volumes kept by default -- no --volumes flag unless remove_volumes=True.
+    assert all("--volumes" not in cmd for cmd in torn_down)
+
+
+def test_compose_down_all_removes_volumes_only_when_asked(monkeypatch):
+    monkeypatch.setattr(lab_common, "compose_ls_project_names", lambda: ["selftest-lab"])
+    monkeypatch.setattr(lab_common, "detect_compose_base_command", lambda: ["docker", "compose"])
+    torn_down = []
+
+    def fake_run(cmd, **kw):
+        torn_down.append(cmd)
+        return _FakeCompletedProcess(0, "")
+
+    monkeypatch.setattr(lab_common, "run", fake_run)
+    lab_common.compose_down_all(remove_volumes=True)
+    assert torn_down == [["docker", "compose", "-p", "selftest-lab", "down", "--remove-orphans", "--volumes"]]
+
+
+def test_compose_down_all_returns_empty_when_nothing_matches(monkeypatch):
+    monkeypatch.setattr(lab_common, "compose_ls_project_names", lambda: ["unrelated-project"])
+    assert lab_common.compose_down_all() == []
+
+
+def test_compose_down_all_raises_naming_failed_projects(monkeypatch):
+    monkeypatch.setattr(lab_common, "compose_ls_project_names", lambda: ["selftest-lab", "selftest-lab-b"])
+    monkeypatch.setattr(lab_common, "detect_compose_base_command", lambda: ["docker", "compose"])
+    monkeypatch.setattr(
+        lab_common, "run", lambda cmd, **kw: _FakeCompletedProcess(0 if cmd[3] == "selftest-lab" else 1, "")
+    )
+    with pytest.raises(SystemExit, match="selftest-lab-b"):
+        lab_common.compose_down_all()
 
 
 def test_print_published_ports_reports_none_when_empty(monkeypatch, capsys):

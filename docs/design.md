@@ -68,11 +68,17 @@ def cmd_build(args, config):
 ```
 
 Note: `down` is the one lifecycle verb se-lab already registers as a built-in itself
-(`agent/commands/down.py`, calls `agent.common.compose_down()`) since "stop the one compose
-stack this product lab deploys" generalizes across products. `registry.command()` raises on a
-duplicate name, so a product lab cannot also register a top-level `down` — pick a different name
-for anything narrower than that (e.g. tearing down one named profile while leaving another
-running).
+(`agent/commands/down.py`, calls `agent.common.compose_down_all()`) since "stop every Compose
+project this product lab has running" generalizes across products — including ones (like
+family-librarian-lab) that never populate docker-config/docker-compose.yaml and instead manage
+their own dynamically-named per-scenario projects directly. It sweeps by `project_name()` as a
+prefix via `docker compose ls --all`, not a single fixed project, so it also catches leftover
+scenario-run or crashed-run projects. Named volumes are kept unless `--clean-volumes` is passed
+(`compose_down_all(remove_volumes=True)`) -- matches plain `docker compose down`'s own default,
+so a routine `lab down` can't accidentally wipe local data. `registry.command()` raises on a
+duplicate name, so a
+product lab cannot also register a top-level `down` — pick a different name for anything narrower
+than that (e.g. tearing down one named profile while leaving another running).
 
 **Plugin interface — analysis hooks:**
 
@@ -96,6 +102,13 @@ reimplement `docker compose` calls by hand:
   `compose_up()` is a full-stack `down --remove-orphans` then `up -d --remove-orphans` — every
   service restarts, siblings included. `compose_up_service(service)` instead restarts just that
   one named service via `up -d --no-deps`, leaving everything else already running untouched.
+  `compose_down()` stops only the single project `compose_command()` targets — the mid-lifecycle
+  helper for callers (like `reset_database()`) about to bring the same stack back up.
+- `compose_down_all()` — sweeps and tears down *every* Compose project belonging to this product
+  lab (`project_name()` itself, or `project_name()-<suffix>`), found via `compose_ls_project_names()`
+  (`docker compose ls --all`) rather than a single fixed project. This is what `lab down` calls; a
+  product lab with its own dynamically-named per-scenario projects can call it directly too instead
+  of re-implementing the same sweep-and-tear-down loop.
 - `deploy_branch()`, `deploy_source_tag()`, `deploy_current_branch()`, `deploy_tag()` — checkout
   (or pull)/build/`sync_runtime_compose()`/record deployment metadata/bring up, in one call. Each
   takes `extra_compose_files=`; `deploy_current_branch()` additionally takes `service=` — pass

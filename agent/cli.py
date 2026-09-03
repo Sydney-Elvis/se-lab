@@ -71,7 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     top_level, groups = registry.grouped_commands()
     for cmd in top_level:
-        sub = subparsers.add_parser(cmd.name, help=cmd.help)
+        # description=cmd.help too: without it, `lab <cmd> --help` shows a
+        # bare usage line with no explanation of what the command does --
+        # add_parser()'s `help=` only feeds the one-line summary in the
+        # parent command listing, not the subparser's own --help output.
+        sub = subparsers.add_parser(cmd.name, help=cmd.help, description=cmd.help)
         if cmd.configure:
             cmd.configure(sub)
 
@@ -80,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         group_sub = group_parser.add_subparsers(dest=f"{group_name}_command", required=True)
         for cmd in subcommands:
             _, _, leaf = cmd.name.partition(" ")
-            leaf_parser = group_sub.add_parser(leaf, help=cmd.help)
+            leaf_parser = group_sub.add_parser(leaf, help=cmd.help, description=cmd.help)
             if cmd.configure:
                 cmd.configure(leaf_parser)
 
