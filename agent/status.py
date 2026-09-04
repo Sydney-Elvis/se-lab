@@ -1,11 +1,11 @@
-"""Shared base for `lab status`: the runtime/deployment/compose/client report
+"""Shared base for `lab status`: the runtime/deployment/service/client report
 every product lab needs, meant to be subclassed for whatever product-specific
 detail (application health probes, DB state, ...) a lab wants to add.
 
 se-lab still doesn't register `status` as a command itself (see agent/cli.py's
 note on `status`/`run`/`build`/... having no se-lab built-in, unlike `down`)
 -- a product lab keeps owning that name and registering it. What this saves
-is every product lab hand-rolling the runtime/deployment/compose-ps/client
+is every product lab hand-rolling the runtime/deployment/service/client
 boilerplate that's identical everywhere to do it, and it follows the same
 subclass-a-plugin-class shape already used for ClientPlugin/AnalysisPlugin/
 SettingsPlugin rather than inventing a new registration-callback pattern for
@@ -69,18 +69,56 @@ class BaseStatus:
             lines.append(f"Last test result: {last_test['status']}{when}{host}")
         return lines
 
+    def compose_lines(self) -> list[str]:
+        """A compact inventory of services currently running in Compose.
+
+        The raw ``compose ps`` table separates names, health, and ports in a
+        way that is awkward to scan. Keep those facts on one service line so
+        ``lab status`` answers its primary question immediately.
+        """
+        services = lab_common.compose_services()
+        if not services:
+            return ["Running services: none"]
+
+        rows: list[tuple[str, str, str, str]] = []
+        for service in services:
+            name = str(service.get("Service") or service.get("Name") or "?")
+            state = str(service.get("State") or service.get("Status") or "unknown")
+            health = str(service.get("Health") or "-")
+            ports: list[str] = []
+            for publisher in service.get("Publishers") or []:
+                if not isinstance(publisher, dict) or not publisher.get("PublishedPort"):
+                    continue
+                target = publisher.get("TargetPort", "?")
+                protocol = publisher.get("Protocol", "tcp")
+                ports.append(f"{publisher['PublishedPort']}->{target}/{protocol}")
+            rows.append((name, state, health, ", ".join(ports) or "-"))
+
+        widths = [
+            max(len(heading), *(len(row[index]) for row in rows))
+            for index, heading in enumerate(("SERVICE", "STATE", "HEALTH", "PORTS"))
+        ]
+        header = "  ".join(
+            heading.ljust(widths[index]) for index, heading in enumerate(("SERVICE", "STATE", "HEALTH", "PORTS"))
+        )
+        lines = ["Running services:", f"  {header}"]
+        lines.extend(
+            "  " + "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+            for row in rows
+        )
+        return lines
+
     def print_compose_state(self) -> None:
-        """`compose ps` plus every published port, for every service --
-        application, clients, and infra (postgres, clamav, ...) alike. This
-        is where "what application is up, what port is it listening on"
-        lives: the application is just another compose service, no different
-        from a client's, so it needs no special-casing here. Skipped
-        entirely when the product lab hasn't defined a compose stack yet."""
+        """Print a service-first view of the configured Compose stack.
+
+        Application, clients, and supporting infrastructure are all Compose
+        services, so this naturally includes everything the lab has running.
+        """
         if not lab_common.has_compose_stack():
             print("No compose stack defined yet.", flush=True)
             return
-        lab_common.compose_ps()
-        lab_common.print_published_ports()
+        for line in self.compose_lines():
+            print(line, flush=True)
 
     def client_lines(self) -> list[str]:
         """One line per client active in COMPOSE_PROFILES: version, ready

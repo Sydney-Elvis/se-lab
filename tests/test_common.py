@@ -452,6 +452,12 @@ def test_parse_compose_ps_json_empty_input():
     assert lab_common.parse_compose_ps_json("   \n  ") == []
 
 
+def test_compose_services_returns_current_compose_ps_entries(monkeypatch):
+    expected = [{"Service": "web", "State": "running"}]
+    monkeypatch.setattr(lab_common, "_compose_ps_entries", lambda: expected)
+    assert lab_common.compose_services() == expected
+
+
 def test_published_ports_parses_json_array_from_compose_ps(monkeypatch):
     monkeypatch.setattr(lab_common, "compose_command", lambda *a, **kw: ["docker", "compose", "ps", "--format", "json"])
     payload = json.dumps([
