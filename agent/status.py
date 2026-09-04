@@ -73,7 +73,7 @@ class BaseStatus:
         """A compact inventory of services currently running in Compose.
 
         The raw ``compose ps`` table separates names, health, and ports in a
-        way that is awkward to scan. Keep those facts on one service line so
+        way that is awkward to scan.  Keep those facts on one service line so
         ``lab status`` answers its primary question immediately.
         """
         services = lab_common.compose_services()

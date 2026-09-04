@@ -1019,7 +1019,7 @@ def compose_services() -> list[dict[str, Any]]:
     """The services currently reported by this lab's Compose project.
 
     ``docker compose ps`` reports only running containers unless asked for
-    ``--all``. Keeping that default makes this the right source for a
+    ``--all``.  Keeping that default makes this the right source for a
     user-facing "what is running?" report, rather than an inventory of every
     service declared in the Compose file.
     """
