@@ -68,13 +68,37 @@ def test_print_compose_state_skips_without_a_compose_stack(monkeypatch, capsys):
     assert "No compose stack defined yet." in capsys.readouterr().out
 
 
-def test_print_compose_state_calls_compose_ps_and_published_ports(monkeypatch):
+def test_print_compose_state_lists_running_services(monkeypatch, capsys):
     monkeypatch.setattr(lab_common, "has_compose_stack", lambda: True)
-    calls = []
-    monkeypatch.setattr(lab_common, "compose_ps", lambda: calls.append("ps"))
-    monkeypatch.setattr(lab_common, "print_published_ports", lambda: calls.append("ports"))
+    monkeypatch.setattr(
+        lab_common,
+        "compose_services",
+        lambda: [
+            {
+                "Service": "m3undle",
+                "State": "running",
+                "Health": "healthy",
+                "Publishers": [{"PublishedPort": 8787, "TargetPort": 8787, "Protocol": "tcp"}],
+            },
+            {"Service": "postgres", "State": "running", "Publishers": []},
+        ],
+    )
     BaseStatus().print_compose_state()
-    assert calls == ["ps", "ports"]
+    output = capsys.readouterr().out
+    assert "Running services:" in output
+    assert "SERVICE" in output
+    assert "m3undle" in output
+    assert "running" in output
+    assert "healthy" in output
+    assert "8787->8787/tcp" in output
+    assert "postgres" in output
+
+
+def test_print_compose_state_reports_no_running_services(monkeypatch, capsys):
+    monkeypatch.setattr(lab_common, "has_compose_stack", lambda: True)
+    monkeypatch.setattr(lab_common, "compose_services", lambda: [])
+    BaseStatus().print_compose_state()
+    assert "Running services: none" in capsys.readouterr().out
 
 
 def test_client_lines_empty_when_no_clients_active(monkeypatch):

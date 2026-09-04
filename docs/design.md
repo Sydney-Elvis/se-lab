@@ -180,7 +180,7 @@ For clients that are manual-only (e.g. Jellyfin for M3Undle), `verify()` is not 
 
 `status` is not a se-lab built-in and never will be — naming stays with the product lab, same as
 `run`/`build`/`recreate`/etc. (see `agent/cli.py`'s docstring). What's shared instead is a base
-class every product lab's own `status` command subclasses, so the runtime/deployment/compose-ps/
+class every product lab's own `status` command subclasses, so the runtime/deployment/service/
 client reporting — identical on every lab — is written once instead of hand-rolled per product.
 This is the standard shape for any future cross-lab command: the product lab keeps ownership of
 registration, se-lab supplies a subclassable base that does the generic 90%, following the same
@@ -207,9 +207,9 @@ def handle_status(args: argparse.Namespace, config: Config) -> int:
 - `deployment_lines()` — runtime dir, current image, deployment source/commit/update time,
   deployed source checkout branch/commit, last test result. All read from `common.py`'s existing
   deployment-metadata helpers.
-- `print_compose_state()` — `compose ps` plus `published_ports()` for every service. This is
-  where "what application is up, what port is it listening on" lives: the application is just
-  another compose service, no different from a client's, so it needs no special-casing.
+- `print_compose_state()` — a service-first inventory of everything Compose currently reports as
+  running, with service name, state, health, and published ports on the same line. The application
+  is just another Compose service, no different from a client's, so it needs no special-casing.
 - `client_lines()` — one line per client active in `COMPOSE_PROFILES`, cross-referencing each
   registered `ClientPlugin`'s `compose_service` against `published_ports()` for
   version/ready/ports. *Which* clients exist (Jellyfin, CWA, ABS, ...) is per-product; "list the

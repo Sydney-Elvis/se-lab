@@ -1015,11 +1015,22 @@ def _compose_ps_entries() -> list[dict[str, Any]]:
     return parse_compose_ps_json(result.stdout)
 
 
+def compose_services() -> list[dict[str, Any]]:
+    """The services currently reported by this lab's Compose project.
+
+    ``docker compose ps`` reports only running containers unless asked for
+    ``--all``.  Keeping that default makes this the right source for a
+    user-facing "what is running?" report, rather than an inventory of every
+    service declared in the Compose file.
+    """
+    return _compose_ps_entries()
+
+
 def published_ports() -> list[tuple[str, str]]:
     """(service, "published->target/protocol") for each host port this
     project's containers currently publish, per `compose ps`."""
     pairs: list[tuple[str, str]] = []
-    for entry in _compose_ps_entries():
+    for entry in compose_services():
         service = entry.get("Service") or entry.get("Name") or "?"
         for publisher in entry.get("Publishers") or []:
             published = publisher.get("PublishedPort")
