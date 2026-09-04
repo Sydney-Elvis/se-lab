@@ -162,15 +162,35 @@ def external_url(port: int, *, scheme: str = "http", path: str = "") -> str:
     return f"{scheme}://{host}:{port}{normalized_path}"
 
 
+_URL_PATTERN = re.compile(r"https?://\S+")
+
+
+def _color_enabled() -> bool:
+    """Honor the usual NO_COLOR/FORCE_COLOR conventions and otherwise only
+    colorize when stdout is a real terminal -- keeps piped/captured output
+    (including capsys in tests) plain, no escape codes to strip."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    return sys.stdout.isatty()
+
+
+def colorize_urls(text: str) -> str:
+    """Highlight http(s) URLs in *text* blue so they stand out among the
+    surrounding credentials/notes -- a no-op unless _color_enabled()."""
+    if not _color_enabled():
+        return text
+    return _URL_PATTERN.sub(lambda match: f"\033[34m{match.group(0)}\033[0m", text)
+
+
 def print_connection_info(connections: Sequence[ConnectionInfo]) -> None:
     """Print the product-declared manual-testing entry points."""
     for connection in connections:
         details = " / ".join(part for part in (connection.credentials, connection.note) if part)
         suffix = f"  ({details})" if details else ""
-        print(
-            f"  {connection.name}: {external_url(connection.port, scheme=connection.scheme, path=connection.path)}{suffix}",
-            flush=True,
-        )
+        url = external_url(connection.port, scheme=connection.scheme, path=connection.path)
+        print(f"  {connection.name}: {colorize_urls(url)}{suffix}", flush=True)
 
 
 def format_duration(seconds: float | int | None) -> str:
