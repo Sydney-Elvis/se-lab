@@ -33,6 +33,12 @@ engine locally, and the extra `docker run` args for the container backend.
 Everything else -- fixture/scenario bind-mounts, port-conflict cleanup,
 health polling, docker image build-if-default -- is identical regardless of
 what's being simulated, so it lives here once.
+
+A subclass wrapping an unmodified third-party image (no engine checkout to
+build from, nothing to run locally) overrides docker_env() instead of/beside
+docker_run_args(), sets backend="docker" explicitly at construction (rather
+than relying on backend_env_var's "local" default), and can raise from
+local_command() -- see agent.simulators.matrix.MatrixHomeserverFixture.
 """
 
 from __future__ import annotations
@@ -180,6 +186,18 @@ class ExternalSimulator(ABC):
         whatever flag your engine expects.
         """
 
+    def docker_env(self) -> dict[str, str]:
+        """Environment variables passed as `-e KEY=VALUE` before the image name.
+
+        Optional -- most simulators configure themselves entirely via
+        docker_run_args() (CLI flags to their own process). This exists for
+        an engine that's an unmodified third-party image configured only
+        through its environment (no engine checkout, no CLI surface of its
+        own to pass flags to) -- the Matrix homeserver fixture is the first
+        real example. Empty by default so existing subclasses are unaffected.
+        """
+        return {}
+
     def container_path_for(self, host_path: Path) -> str:
         """Map a host path under FIXTURES_DIR/SCENARIOS_DIR to its path
         inside the simulator container, per the mounts _start_docker() adds."""
@@ -325,7 +343,18 @@ class ExternalSimulator(ABC):
     # Docker helpers
     # -------------------------------------------------------------------
 
+    # Set False by a subclass that always wraps an unmodified third-party
+    # image with no local engine checkout to build from at all (e.g.
+    # MatrixHomeserverFixture) -- default_image is then just a pull target,
+    # not a build target, and `docker run` pulls it implicitly if it isn't
+    # cached locally. True preserves the original assumption every other
+    # subclass still relies on: an unpinned "default" image means build one
+    # from engine_env_var's checkout.
+    builds_from_source: bool = True
+
     def _ensure_image(self) -> None:
+        if not self.builds_from_source:
+            return
         if not self._image_is_default:
             # Caller pinned an explicit image (e.g. a pulled/published tag,
             # or image_env_var signaling a run-level prebuild); treat it as
@@ -361,6 +390,8 @@ class ExternalSimulator(ABC):
         ]
         if self.SCENARIOS_DIR.is_dir():
             cmd += ["-v", f"{self.SCENARIOS_DIR.resolve()}:{self.scenarios_mount_path}:ro"]
+        for key, value in self.docker_env().items():
+            cmd += ["-e", f"{key}={value}"]
         cmd += [
             "--label", f"{self.docker_label_prefix}.component=simulator",
             "--label", f"{self.docker_label_prefix}.port={self.port}",

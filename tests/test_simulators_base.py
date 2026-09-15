@@ -77,6 +77,23 @@ def test_explicit_image_wins_and_is_not_default(monkeypatch):
     assert sim._image_is_default is False
 
 
+def test_ensure_image_skips_build_when_builds_from_source_is_false(monkeypatch):
+    build_calls: list[str] = []
+
+    class _PulledImageSimulator(_FakeSimulator):
+        builds_from_source = False
+
+        def build_image(self) -> str:
+            build_calls.append(self.image)
+            return self.image
+
+    monkeypatch.delenv("SELFTEST_SIM_ENGINE_DIR", raising=False)
+    sim = _PulledImageSimulator(port=19003)  # default image, no engine dir set
+    sim._ensure_image()  # must not raise "engine dir not set" and must not build
+
+    assert build_calls == []
+
+
 def test_container_name_uses_prefix_and_port():
     sim = _FakeSimulator(port=19042)
     assert sim.container_name == "selftest-sim-19042"
@@ -164,3 +181,48 @@ def test_start_docker_builds_run_command(monkeypatch, tmp_path):
     assert "pinned/tag:1" in run_call
     assert "--port" in run_call and "19001" in run_call
     assert sim._container_started is True
+
+
+def test_start_docker_passes_no_env_by_default(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+
+    def _fake_run_docker(*args, timeout=None, check=True):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("agent.simulators.base._run_docker", _fake_run_docker)
+    monkeypatch.setattr(_FakeSimulator, "FIXTURES_DIR", tmp_path / "fixtures")
+    monkeypatch.setattr(_FakeSimulator, "SCENARIOS_DIR", tmp_path / "scenarios")
+    (tmp_path / "fixtures").mkdir()
+
+    sim = _FakeSimulator(port=19001, backend="docker", image="pinned/tag:1")
+    sim.start()
+
+    run_call = next(c for c in calls if c[0] == "run")
+    assert "-e" not in run_call
+
+
+def test_start_docker_includes_docker_env(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+
+    def _fake_run_docker(*args, timeout=None, check=True):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    class _EnvSimulator(_FakeSimulator):
+        def docker_env(self) -> dict[str, str]:
+            return {"FOO": "bar", "BAZ": "qux"}
+
+    monkeypatch.setattr("agent.simulators.base._run_docker", _fake_run_docker)
+    monkeypatch.setattr(_EnvSimulator, "FIXTURES_DIR", tmp_path / "fixtures")
+    monkeypatch.setattr(_EnvSimulator, "SCENARIOS_DIR", tmp_path / "scenarios")
+    (tmp_path / "fixtures").mkdir()
+
+    sim = _EnvSimulator(port=19002, backend="docker", image="pinned/tag:1")
+    sim.start()
+
+    run_call = next(c for c in calls if c[0] == "run")
+    assert run_call.index("-e") < run_call.index("pinned/tag:1")
+    env_pairs = [run_call[i + 1] for i, arg in enumerate(run_call) if arg == "-e"]
+    assert "FOO=bar" in env_pairs
+    assert "BAZ=qux" in env_pairs
