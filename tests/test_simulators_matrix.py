@@ -15,7 +15,12 @@ import urllib.error
 
 import pytest
 
-from agent.simulators.matrix import MatrixApiError, MatrixHomeserverFixture, MatrixTestClient
+from agent.simulators.matrix import (
+    MatrixApiError,
+    MatrixHomeserverFixture,
+    MatrixTestClient,
+    parse_bootstrap_registration_token,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +105,15 @@ def test_read_bootstrap_registration_token_times_out(monkeypatch):
 
     with pytest.raises(RuntimeError):
         fixture.read_bootstrap_registration_token(timeout=0.1)
+
+
+def test_parse_bootstrap_registration_token_pure_function():
+    colored_log = "\x1b[1mregistration token \x1b[1;32mZyXwVu987654\x1b[0m . Pick your own username\n"
+    assert parse_bootstrap_registration_token(colored_log) == "ZyXwVu987654"
+
+
+def test_parse_bootstrap_registration_token_returns_none_when_absent():
+    assert parse_bootstrap_registration_token("nothing relevant here") is None
 
 
 # ---------------------------------------------------------------------------

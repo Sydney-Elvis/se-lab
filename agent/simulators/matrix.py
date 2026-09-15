@@ -150,15 +150,26 @@ class MatrixHomeserverFixture(ExternalSimulator):
             result = subprocess.run(
                 ["docker", "logs", self.container_name], text=True, capture_output=True, check=False,
             )
-            combined = _ANSI_ESCAPE.sub("", result.stdout + result.stderr)
-            match = _BOOTSTRAP_TOKEN_PATTERN.search(combined)
-            if match:
-                return match.group(1)
+            token = parse_bootstrap_registration_token(result.stdout + result.stderr)
+            if token:
+                return token
             time.sleep(0.5)
         raise RuntimeError(
             f"Continuwuity never printed its bootstrap registration token within {timeout}s "
             f"(container {self.container_name})."
         )
+
+
+def parse_bootstrap_registration_token(log_text: str) -> str | None:
+    """Pure text -> token parse, split out of
+    read_bootstrap_registration_token() so a consumer that runs Continuwuity
+    as its own Compose service (not through this class's own docker-run
+    lifecycle -- family-librarian-lab's `matrix` profile is the first real
+    example) can still read the same bootstrap token from `docker compose
+    logs <service>` output without re-deriving the ANSI-stripping regex."""
+    combined = _ANSI_ESCAPE.sub("", log_text)
+    match = _BOOTSTRAP_TOKEN_PATTERN.search(combined)
+    return match.group(1) if match else None
 
 
 class MatrixApiError(RuntimeError):
