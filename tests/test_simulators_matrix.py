@@ -20,6 +20,7 @@ from agent.simulators.matrix import (
     MatrixHomeserverFixture,
     MatrixTestClient,
     parse_bootstrap_registration_token,
+    wait_for_ready,
 )
 
 
@@ -114,6 +115,22 @@ def test_parse_bootstrap_registration_token_pure_function():
 
 def test_parse_bootstrap_registration_token_returns_none_when_absent():
     assert parse_bootstrap_registration_token("nothing relevant here") is None
+
+
+def test_wait_for_ready_returns_true_on_200(monkeypatch):
+    monkeypatch.setattr(
+        "agent.simulators.matrix.urllib.request.urlopen",
+        lambda request, timeout=None: _FakeHttpResponse(200, {}),
+    )
+    assert wait_for_ready("http://fixture", timeout=1.0) is True
+
+
+def test_wait_for_ready_returns_false_on_timeout(monkeypatch):
+    def _always_refused(request, timeout=None):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr("agent.simulators.matrix.urllib.request.urlopen", _always_refused)
+    assert wait_for_ready("http://fixture", timeout=0.05) is False
 
 
 # ---------------------------------------------------------------------------

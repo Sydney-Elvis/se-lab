@@ -172,6 +172,34 @@ def parse_bootstrap_registration_token(log_text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def wait_for_ready(base_url: str, *, timeout: float = 60.0) -> bool:
+    """Poll a Matrix homeserver's own unauthenticated Client-Server API
+    (GET /_matrix/client/versions) until it answers 200, regardless of how
+    it was launched. `ExternalSimulator.wait_healthy()` does something
+    similar but additionally checks its own docker-run container's
+    liveness (`is_running()`), which doesn't apply to a homeserver a
+    consumer brings up as a plain Compose service instead of through this
+    module's own fixture lifecycle -- family-librarian-lab's `matrix`
+    profile is the first real example: `docker compose up --wait` only
+    proves the container reached "running" (no Docker healthcheck exists
+    for this image -- it has no shell at all), not that the process inside
+    has finished binding its listener. Returns False on timeout rather than
+    raising, same convention as wait_healthy() -- the caller decides what
+    "never became ready" means for its own context."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(
+                f"{base_url.rstrip('/')}/_matrix/client/versions", timeout=2.0
+            ) as response:
+                if response.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
 class MatrixApiError(RuntimeError):
     """A non-2xx response from the homeserver, with the parsed error body when available."""
 
