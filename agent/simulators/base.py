@@ -198,6 +198,32 @@ class ExternalSimulator(ABC):
         """
         return {}
 
+    def additional_ports(self) -> list[int]:
+        """Extra host<->container ports to publish alongside self.port
+        (same host==container convention -- ExternalSimulator has always
+        made that assumption for the primary port, and there's no reason
+        for a second one to work differently).
+
+        Optional -- most simulators are single-port. Exists for a wrapped
+        third-party service that inherently exposes more than one protocol
+        on separate ports (Mailpit: its own HTTP API, used for the *test
+        client's* assertions, and the SMTP listener the thing under test
+        actually connects to, are never the same port). Empty by default.
+        """
+        return []
+
+    def docker_volumes(self) -> dict[str, str]:
+        """Extra host path -> container path read-only bind mounts, beyond
+        the fixed FIXTURES_DIR/SCENARIOS_DIR ones the base class always
+        adds. Optional -- exists for a wrapped third-party image configured
+        partly through mounted files it has no environment-variable
+        equivalent for (Mailpit's SMTP AUTH credential file and TLS
+        cert/key are files, not env vars). Host paths are used exactly as
+        given -- resolve relative/temp paths to absolute before returning
+        them. Empty by default.
+        """
+        return {}
+
     def container_path_for(self, host_path: Path) -> str:
         """Map a host path under FIXTURES_DIR/SCENARIOS_DIR to its path
         inside the simulator container, per the mounts _start_docker() adds."""
@@ -386,10 +412,14 @@ class ExternalSimulator(ABC):
             "run", "-d",
             "--name", self.container_name,
             "-p", f"{self.port}:{self.port}",
-            "-v", f"{self.FIXTURES_DIR.resolve()}:{self.fixtures_mount_path}:ro",
         ]
+        for extra_port in self.additional_ports():
+            cmd += ["-p", f"{extra_port}:{extra_port}"]
+        cmd += ["-v", f"{self.FIXTURES_DIR.resolve()}:{self.fixtures_mount_path}:ro"]
         if self.SCENARIOS_DIR.is_dir():
             cmd += ["-v", f"{self.SCENARIOS_DIR.resolve()}:{self.scenarios_mount_path}:ro"]
+        for host_path, container_path in self.docker_volumes().items():
+            cmd += ["-v", f"{host_path}:{container_path}:ro"]
         for key, value in self.docker_env().items():
             cmd += ["-e", f"{key}={value}"]
         cmd += [

@@ -226,3 +226,52 @@ def test_start_docker_includes_docker_env(monkeypatch, tmp_path):
     env_pairs = [run_call[i + 1] for i, arg in enumerate(run_call) if arg == "-e"]
     assert "FOO=bar" in env_pairs
     assert "BAZ=qux" in env_pairs
+
+
+def test_start_docker_publishes_additional_ports(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+
+    def _fake_run_docker(*args, timeout=None, check=True):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    class _MultiPortSimulator(_FakeSimulator):
+        def additional_ports(self) -> list[int]:
+            return [19555, 19556]
+
+    monkeypatch.setattr("agent.simulators.base._run_docker", _fake_run_docker)
+    monkeypatch.setattr(_MultiPortSimulator, "FIXTURES_DIR", tmp_path / "fixtures")
+    monkeypatch.setattr(_MultiPortSimulator, "SCENARIOS_DIR", tmp_path / "scenarios")
+    (tmp_path / "fixtures").mkdir()
+
+    sim = _MultiPortSimulator(port=19003, backend="docker", image="pinned/tag:1")
+    sim.start()
+
+    run_call = next(c for c in calls if c[0] == "run")
+    port_pairs = [run_call[i + 1] for i, arg in enumerate(run_call) if arg == "-p"]
+    assert port_pairs == ["19003:19003", "19555:19555", "19556:19556"]
+
+
+def test_start_docker_mounts_extra_volumes(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+
+    def _fake_run_docker(*args, timeout=None, check=True):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    class _VolumeSimulator(_FakeSimulator):
+        def docker_volumes(self) -> dict[str, str]:
+            return {"/host/auth-file": "/data/auth-file", "/host/cert.pem": "/data/cert.pem"}
+
+    monkeypatch.setattr("agent.simulators.base._run_docker", _fake_run_docker)
+    monkeypatch.setattr(_VolumeSimulator, "FIXTURES_DIR", tmp_path / "fixtures")
+    monkeypatch.setattr(_VolumeSimulator, "SCENARIOS_DIR", tmp_path / "scenarios")
+    (tmp_path / "fixtures").mkdir()
+
+    sim = _VolumeSimulator(port=19004, backend="docker", image="pinned/tag:1")
+    sim.start()
+
+    run_call = next(c for c in calls if c[0] == "run")
+    volume_args = [run_call[i + 1] for i, arg in enumerate(run_call) if arg == "-v"]
+    assert "/host/auth-file:/data/auth-file:ro" in volume_args
+    assert "/host/cert.pem:/data/cert.pem:ro" in volume_args

@@ -264,6 +264,43 @@ scenario bind-mounts via `container_path_for()`, image build-if-default, health 
 from — it kept its own constructor (`fixture=`, `max_streams=`) and `playlist_url` convention,
 neither of which is generic enough to belong in the base class.
 
+Three further optional hooks exist for a subclass wrapping an **unmodified third-party image**
+rather than a custom-built engine (no local checkout, nothing to run outside Docker) — added for
+the fixtures in the next section, and reusable by any future one:
+- `docker_env()` — environment variables passed as `-e KEY=VALUE`, for an image configured
+  entirely through its environment (no CLI flags of its own).
+- `docker_volumes()` — extra host→container read-only bind mounts, for config the image only
+  accepts as a file (a credentials file, a TLS cert/key).
+- `additional_ports()` — extra host==container port publishes beyond `self.port`, for an image
+  that inherently exposes more than one protocol on separate ports.
+- `builds_from_source = False` — skips `_ensure_image()`'s "build from `engine_env_var`'s
+  checkout" default, since a wrapped third-party image is a pull target, never a build target.
+
+### External Service Fixtures (`agent/simulators/matrix.py`, `agent/simulators/smtp.py`)
+
+Two ready-to-use `ExternalSimulator` subclasses for external services notification-style products
+commonly need to test against for real — not templates to copy, actual importable fixtures:
+
+- **`MatrixHomeserverFixture` / `MatrixTestClient`** (`agent/simulators/matrix.py`) — a disposable
+  Matrix homeserver (Continuwuity, the actively maintained Conduit/Conduwuit continuation — chosen
+  after the original Famedly Conduit image was found, by running it, to have a live join/sync bug;
+  see the module docstring) plus a plain Client-Server API v3 test client: register, log in,
+  create/join a room, send, and poll `/sync` for a reply. Any product with an outbound Matrix bot
+  needs exactly this to prove delivery and drive a reply for real, regardless of what the product
+  does with either side of that conversation.
+- **`MailpitFixture` / `MailpitClient`** (`agent/simulators/smtp.py`) — a disposable SMTP catcher
+  (Mailpit) with optional real STARTTLS (self-signed CA generated via `openssl`, cached on disk)
+  and SMTP AUTH (a fixed credential with a pre-generated bcrypt hash — no bcrypt library dependency
+  here; see the module docstring for why customizing it isn't supported), plus a client that reads
+  Mailpit's own JSON HTTP API to assert what actually arrived, including which SMTP-AUTH identity
+  it arrived authenticated as.
+
+Both were live-verified end to end against real containers before being committed (register two
+Matrix accounts, DM, reply, read the reply back; real STARTTLS+AUTH send via `smtplib`, a wrong
+password rejected with a real `SMTPAuthenticationError`) — not just unit-tested against mocks.
+family-librarian-lab was the first consumer for both; a second product wanting either should
+import these directly rather than re-deriving them, per this doc's own guardrail below.
+
 ### Settings Archives (`./lab settings`)
 
 Product applications own their settings archive format and API calls. se-lab provides the common
@@ -418,9 +455,16 @@ Both target the same M3Undle instance. Test results are compared suite-by-suite 
 ## What se-lab Does NOT Contain
 
 - Any product test suites
-- Any product-specific HTTP clients
-- Docker Compose templates (those live in product labs)
-- Fixtures or test data
+- Any **product-specific** HTTP clients (a client for the product under test itself, or for a
+  destination only that product's domain cares about — CWA, Audiobookshelf). A client for a
+  generic third-party protocol/service a product merely talks to (Matrix, SMTP) belongs in the
+  "External Service Fixtures" section above instead, once a second consumer would plausibly want
+  it — see the guardrail below.
+- Docker Compose templates (those live in product labs — including for the fixtures above: a
+  product lab that runs one as a Compose service rather than calling `.start()` directly still
+  owns that YAML itself)
+- Product-specific fixtures or test data (a generic third-party service fixture, per above, is not
+  this — it carries no product's data or business logic)
 - Hardcoded service names, ports, or URLs
 - AI model names (all via `lab.env`)
 
