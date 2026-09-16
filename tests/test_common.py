@@ -130,8 +130,9 @@ def test_external_url_uses_generic_hosted_link_setting(monkeypatch):
     assert lab_common.external_url(443, scheme="https", path="login") == "https://toontown-int-srv2:443/login"
 
 
-def test_print_connection_info_includes_credentials_and_note(monkeypatch, capsys):
+def test_print_connection_info_renders_a_bordered_card_with_credentials_and_note(monkeypatch, capsys):
     monkeypatch.setenv("LAB_EXTERNAL_HOST", "toontown-int-srv2")
+    monkeypatch.setattr(lab_common.shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((98, 24)))
     lab_common.print_connection_info(
         [
             lab_common.ConnectionInfo(
@@ -139,10 +140,32 @@ def test_print_connection_info_includes_credentials_and_note(monkeypatch, capsys
             )
         ]
     )
-    assert capsys.readouterr().out == (
-        "  Example app: http://toontown-int-srv2:18080  "
-        "(user: admin / password: test / already configured)\n"
-    )
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("┌─ Example app ")
+    assert lines[0].endswith("┐")
+    assert "http://toontown-int-srv2:18080" in lines[1]
+    assert "user: admin / password: test" in lines[2]
+    assert "Note: already configured" in lines[3]
+    assert lines[4].startswith("└") and lines[4].endswith("┘")
+    assert lines[5] == ""
+
+
+def test_print_connection_info_wraps_a_long_note_instead_of_running_off_the_edge(monkeypatch, capsys):
+    monkeypatch.setenv("LAB_EXTERNAL_HOST", "toontown-int-srv2")
+    monkeypatch.setattr(lab_common.shutil, "get_terminal_size", lambda fallback=None: os.terminal_size((60, 24)))
+    long_note = "a " * 80  # far longer than any reasonable box width
+    lab_common.print_connection_info([lab_common.ConnectionInfo("Example app", 18080, note=long_note)])
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("│")]
+    assert len(lines) > 2  # URL line plus more than one wrapped note line
+    assert all(len(line) == len(lines[0]) for line in lines)  # every box row is the same total width
+
+
+def test_print_connection_info_omits_the_url_line_when_port_is_none(monkeypatch, capsys):
+    monkeypatch.setenv("LAB_EXTERNAL_HOST", "toontown-int-srv2")
+    lab_common.print_connection_info([lab_common.ConnectionInfo("Seeded readers", note="reader1 / reader2")])
+    output = capsys.readouterr().out
+    assert "http://" not in output
+    assert "Note: reader1 / reader2" in output
 
 
 def test_settings_passphrase_reads_env_prefixed_key(monkeypatch):

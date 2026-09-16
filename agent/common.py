@@ -35,6 +35,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import textwrap
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -120,7 +121,11 @@ def _settings_passphrase_env_key() -> str:
 
 @dataclass(frozen=True, slots=True)
 class ConnectionInfo:
-    """One user-facing HTTP entry point contributed by a product lab.
+    """One user-facing manual-testing note contributed by a product lab --
+    typically an HTTP entry point (name/port/credentials), but `port` is
+    optional: a note with nothing to link to (a seeded account, an
+    already-wired transport) still gets the same bordered-card rendering
+    from print_connection_info() as everything else, just without a URL line.
 
     se-lab owns the common hosted-URL setting and terminal rendering; product
     labs own their application names, ports, credentials, and whether a
@@ -128,7 +133,7 @@ class ConnectionInfo:
     """
 
     name: str
-    port: int
+    port: int | None = None
     credentials: str | None = None
     note: str | None = None
     path: str = ""
@@ -184,13 +189,50 @@ def colorize_urls(text: str) -> str:
     return _URL_PATTERN.sub(lambda match: f"\033[34m{match.group(0)}\033[0m", text)
 
 
+_BOX_MIN_WIDTH = 44
+_BOX_MAX_WIDTH = 96
+
+
+def _box_width() -> int:
+    columns = shutil.get_terminal_size(fallback=(_BOX_MAX_WIDTH + 2, 24)).columns
+    return max(_BOX_MIN_WIDTH, min(columns - 2, _BOX_MAX_WIDTH))
+
+
+def _print_box(title: str, body_lines: Sequence[str]) -> None:
+    """Print `body_lines` (each one already a complete, possibly long, fact)
+    as a bordered card titled `title`, wrapped to fit the terminal (or a
+    reasonable fallback width) instead of running off the edge the way one
+    long unbroken line does. Wrapping happens on the plain text; URLs are
+    colorized only after padding, so the invisible ANSI codes never throw
+    off the column math."""
+    width = _box_width()
+    inner = width - 4
+    wrapped: list[str] = []
+    for line in body_lines:
+        wrapped.extend(textwrap.wrap(line, inner) or [""])
+
+    dashes = max(1, width - 5 - len(title))
+    print(f"┌─ {title} {'─' * dashes}┐", flush=True)
+    for line in wrapped:
+        print(f"│ {colorize_urls(line.ljust(inner))} │", flush=True)
+    print(f"└{'─' * (width - 2)}┘", flush=True)
+
+
 def print_connection_info(connections: Sequence[ConnectionInfo]) -> None:
-    """Print the product-declared manual-testing entry points."""
+    """Print each product-declared manual-testing note as its own bordered
+    card: URL (when the note has one), credentials, and note, each wrapped
+    to fit -- instead of one line per entry that can run well past the
+    terminal's edge for a service with a lot to say."""
     for connection in connections:
-        details = " / ".join(part for part in (connection.credentials, connection.note) if part)
-        suffix = f"  ({details})" if details else ""
-        url = external_url(connection.port, scheme=connection.scheme, path=connection.path)
-        print(f"  {connection.name}: {colorize_urls(url)}{suffix}", flush=True)
+        lines: list[str] = []
+        if connection.port is not None:
+            lines.append(external_url(connection.port, scheme=connection.scheme, path=connection.path))
+        if connection.credentials:
+            lines.append(connection.credentials)
+        if connection.note:
+            lines.append(f"Note: {connection.note}")
+        _print_box(connection.name, lines)
+        print(flush=True)
 
 
 def format_duration(seconds: float | int | None) -> str:
