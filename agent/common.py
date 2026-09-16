@@ -1254,6 +1254,19 @@ def repo_head_commit(short: bool = False) -> str | None:
     return git_commit(repo_dir(), short=short)
 
 
+def repo_checkout_summary() -> str | None:
+    """"branch=X commit=Y" for the deployed application checkout at
+    repo_dir(), or None when there is no checkout yet. Shared by every
+    caller that reports what source a running/planned lab is on --
+    BaseStatus.deployment_lines(), each product lab's own `status` command,
+    and `run`/`up`'s plan preview -- so they can't drift out of sync."""
+    if not is_git_checkout(repo_dir()):
+        return None
+    branch = repo_current_branch() or "detached"
+    commit = repo_head_commit(short=True) or "unknown"
+    return f"branch={branch} commit={commit}"
+
+
 def _repo_version_line(label: str, path: Path) -> str:
     if not is_git_checkout(path):
         return f"{label}: not a git checkout ({path})"

@@ -55,10 +55,9 @@ class BaseStatus:
                 f"Last deployment update: {metadata['updated_at_utc']} on {metadata['updated_host'] or 'unknown host'}"
             )
 
-        if lab_common.is_git_checkout(lab_common.repo_dir()):
-            branch = lab_common.repo_current_branch() or "detached"
-            commit = lab_common.repo_head_commit(short=True) or "unknown"
-            lines.append(f"Deployed source checkout: branch={branch} commit={commit}")
+        checkout = lab_common.repo_checkout_summary()
+        if checkout:
+            lines.append(f"Deployed source checkout: {checkout}")
 
         last_test = lab_common.get_last_test_metadata()
         if last_test["target_type"] and last_test["target_ref"]:
