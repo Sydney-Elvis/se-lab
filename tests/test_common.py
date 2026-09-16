@@ -647,3 +647,8 @@ def test_run_capture_prints_its_trace_line_through_the_dashboard_when_active():
         assert any("echo hi" in line for line in dashboard.printed)
     finally:
         lab_common.set_active_dashboard(None)
+
+
+def test_run_capture_quiet_suppresses_its_trace_line(capsys):
+    lab_common.run_capture(["echo", "hi"], quiet=True)
+    assert capsys.readouterr().out == ""

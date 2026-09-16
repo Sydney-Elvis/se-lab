@@ -677,11 +677,18 @@ def run_capture(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     check: bool = True,
+    quiet: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run `command` fully captured and silent -- for callers that want the
     output programmatically, not shown live. Its own trace line still routes
     through the dashboard when one is active, same as run(), so it doesn't
-    corrupt the live footer."""
+    corrupt the live footer. `quiet=True` drops even that trace line, for a
+    read-only lookup (e.g. git_branch/git_commit) folded into a
+    human-facing report where "+ git ..." would just be noise, not the
+    "show what this destructive/slow step is doing" visibility run()/
+    run_capture() exist to give everywhere else."""
+    if quiet:
+        return subprocess.run(command, cwd=str(cwd) if cwd else None, env=env, check=check, text=True, capture_output=True)
     message = f"+ {format_command(command)}"
     if _ACTIVE_DASHBOARD is not None:
         _ACTIVE_DASHBOARD.print(message)
@@ -1227,7 +1234,7 @@ def print_repo_summary(repo_url: str) -> None:
 def git_branch(path: Path) -> str | None:
     if not is_git_checkout(path):
         return None
-    result = run_capture(["git", "branch", "--show-current"], cwd=path, check=False)
+    result = run_capture(["git", "branch", "--show-current"], cwd=path, check=False, quiet=True)
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
@@ -1240,7 +1247,7 @@ def git_commit(path: Path, *, short: bool = False) -> str | None:
     if short:
         command.append("--short")
     command.append("HEAD")
-    result = run_capture(command, cwd=path, check=False)
+    result = run_capture(command, cwd=path, check=False, quiet=True)
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
