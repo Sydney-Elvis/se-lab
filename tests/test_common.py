@@ -304,6 +304,48 @@ def test_git_repo_primitives_against_a_real_repo(tmp_path):
         shutil.rmtree(target, ignore_errors=True)
 
 
+def test_repo_dir_with_key_is_separate_from_the_default_checkout(tmp_path):
+    """repo_dir()/ensure_repo_checkout() must stay usable for a product lab's
+    own single checkout (key=None, unchanged behavior) while also supporting
+    N additional, independently-keyed checkouts -- e.g. a plugin registry
+    checking out several private repos without colliding with the lab's own
+    repo_dir() or with each other."""
+    import shutil
+    import subprocess
+
+    default_target = lab_common.repo_dir()
+    keyed_target = lab_common.repo_dir(key="plugin-a")
+    assert keyed_target != default_target
+    assert not str(keyed_target).startswith(str(default_target))
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", "-q", str(origin)], check=True)
+
+    shutil.rmtree(keyed_target, ignore_errors=True)
+    try:
+        result = lab_common.ensure_repo_checkout(str(origin), key="plugin-a")
+        assert result == keyed_target
+        assert keyed_target.exists()
+        assert not default_target.exists() or default_target != keyed_target
+    finally:
+        shutil.rmtree(keyed_target, ignore_errors=True)
+
+
+def test_load_local_registry_returns_none_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "REPO_ROOT", tmp_path)
+    assert lab_common.load_local_registry("external-providers.local.yaml") is None
+
+
+def test_load_local_registry_reads_yaml(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "REPO_ROOT", tmp_path)
+    (tmp_path / "external-providers.local.yaml").write_text(
+        "providers:\n  - name: plugin-a\n    repo_url: https://example.invalid/a.git\n",
+        encoding="utf-8",
+    )
+    data = lab_common.load_local_registry("external-providers.local.yaml")
+    assert data == {"providers": [{"name": "plugin-a", "repo_url": "https://example.invalid/a.git"}]}
+
+
 def test_client_version_history_roundtrip():
     assert lab_common.read_client_version_history() == {}
     lab_common.push_client_version_record("fakeclient", {"version": "1.0.0"})

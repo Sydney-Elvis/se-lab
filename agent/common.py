@@ -79,7 +79,13 @@ LAST_TEST_METADATA_KEYS = (
 )
 
 
-def repo_dir() -> Path:
+def repo_dir(key: str | None = None) -> Path:
+    """The checkout directory for the lab's own product repo, or for an
+    auxiliary repo when `key` is given (e.g. one of several plugin repos a
+    product lab manages, each keyed by its own name, kept separate from the
+    lab's own single fixed checkout)."""
+    if key is not None:
+        return REPOS_DIR / "keyed" / key
     product_name, _ = runtime.require_product_config()
     return REPOS_DIR / product_name
 
@@ -368,6 +374,32 @@ def load_env_file(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip()
     return values
+
+
+def load_local_registry(filename: str) -> dict | None:
+    """Read an optional, gitignored structured config file at repo_dir()/filename.
+
+    Lets a product lab support per-host, untracked plugin/registry data (e.g. a
+    list of private integrations with their own repo URLs and settings) without
+    any of it ever appearing in tracked source. Returns None if the file is
+    absent; raises if it's present but unparseable, since a present-but-broken
+    config file must fail loudly rather than silently look like "nothing configured".
+    """
+    path = runtime.REPO_ROOT / filename
+    if not path.exists():
+        return None
+    if path.suffix.lower() == ".json":
+        return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        import yaml  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            f"{path} exists but PyYAML is not installed, so it cannot be read. "
+            "Install dependencies with 'pip install -r requirements.txt' "
+            "(see the lab's .venv setup) or remove this file."
+        ) from exc
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
 
 
 def current_hostname() -> str:
@@ -1245,14 +1277,15 @@ def is_git_checkout(path: Path) -> bool:
     return (path / ".git").exists()
 
 
-def ensure_repo_checkout(repo_url: str) -> None:
+def ensure_repo_checkout(repo_url: str, key: str | None = None) -> Path:
     ensure_layout()
-    target = repo_dir()
+    target = repo_dir(key)
     if target.exists():
         if not is_git_checkout(target):
             raise SystemExit(f"{target} exists but is not a git checkout. Move it aside or remove it before deploying a branch.")
-        return
+        return target
     run(["git", "clone", repo_url, str(target)])
+    return target
 
 
 def repo_origin_url() -> str | None:
